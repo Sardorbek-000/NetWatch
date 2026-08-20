@@ -32,15 +32,28 @@ class NetWatchApp(ctk.CTk):
 class MainMenu(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
-
+        self.app = app
+    def refresh_main_menu(self):
+        for widget in self.winfo_children():
+            widget.destroy()
         ctk.CTkLabel(self, text="NetWatch", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=(40, 30))
 
-        ctk.CTkButton(self, text="Enter Profile", width=220,
+        # ctk.CTkButton(self, text="Enter Profile", width=220,
+        #               command=lambda: app.show_frame(Profile)).pack(pady=10)
+
+        for profile_name in self.app.profiles:
+            ctk.CTkButton(self, text=profile_name,width=220,
                       command=lambda: app.show_frame(Profile)).pack(pady=10)
+
         ctk.CTkButton(self, text="Add Profile", width=220,
                       command=lambda: app.show_frame(AddProfile)).pack(pady=10)
         ctk.CTkButton(self, text="Settings", width=220,
                       command=lambda: app.show_frame(Settings)).pack(pady=10)
+
+    def tkraise(self):
+        super().tkraise()
+        self.after(100, self.refresh_main_menu())
+
 
 
 class Settings(ctk.CTkFrame):
