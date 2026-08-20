@@ -12,6 +12,8 @@ class NetWatchApp(ctk.CTk):
         self.geometry("800x500")
         self.minsize(640, 420)
 
+        self.profiles = [];
+
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -55,15 +57,24 @@ class Settings(ctk.CTkFrame):
 class AddProfile(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
-
+        self.app = app
         ctk.CTkLabel(self, text="Add Profile", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
 
         self.title_entry = ctk.CTkEntry(self, width=260, placeholder_text="Profile title")
         self.title_entry.pack(pady=10)
 
-        ctk.CTkButton(self, text="Create", width=220).pack(pady=10)
+        ctk.CTkButton(self, text="Create", width=220, command=lambda : self.create_profile()).pack(pady=10)
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
+
+    def create_profile(self):
+        profile_name = self.title_entry.get()
+
+        if profile_name.strip():
+            self.app.profiles.append(profile_name)
+            self.title_entry.delete(0, "end");
+            print(f"Profile added: {profile_name}")
+            self.app.show_frame(MainMenu)
 
 
 class Profile(ctk.CTkFrame):
