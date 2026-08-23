@@ -60,8 +60,8 @@ def insert_dummy_scan():
     # Insertion of dummy devices associated with the scan
     dummy_devices = [
         (scan_id, "192.168.1.1", "AA:BB:CC:00:11:22", "TP-Link", "up", "router.local"),
-        (scan_id, "192.168.1.15", "AA:BB:CC:33:44:55", "Apple", "up", "ethans-iphone"),
-        (scan_id, "192.168.1.22", "AA:BB:CC:66:77:88", "Dell", "down", None),
+        (scan_id, "192.168.1.16", "AA:BB:CC:33:44:55", "Apple", "up", "ethans-iphone"),
+        (scan_id, "192.168.1.21", "AA:BB:CC:66:77:88", "Dell", "down", None),
     ]
 
     cursor.executemany("""
