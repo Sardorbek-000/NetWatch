@@ -24,7 +24,7 @@ class NetWatchApp(ctk.CTk):
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         self.show_frame(MainMenu)
-
+-6 7889
     def show_frame(self, frame_class):
         self.frames[frame_class].tkraise()
 
