@@ -1,6 +1,7 @@
 import socket
-import sys
 import threading
+
+from database.PortParsingDatabase import ParsePortsDb
 
 
 class PortScanner:
@@ -10,6 +11,7 @@ class PortScanner:
         self.timeout = timeout
         self.open_ports = []
         self.total_ports = 65535
+        self.parse_ports_db = ParsePortsDb()
 
     def scan_port(self, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -18,6 +20,7 @@ class PortScanner:
         sock.close()
         if result == 0:
             self.open_ports.append(port)
+            self.parse_ports_db.InsertOpenPort(self.host, port)
             print(f"Port {port} open")
 
     def run(self):

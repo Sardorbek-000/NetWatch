@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from core.ParsePorts import PortScanner
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -12,21 +13,30 @@ class NetWatchApp(ctk.CTk):
         self.geometry("800x500")
         self.minsize(640, 420)
 
-        self.profiles = [];
+        self.profiles = []
 
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.frames = {}
-        for Frame in (MainMenu, Settings, AddProfile, Profile):
+        for Frame in (MainMenu, Settings, AddProfile, PortScan):
             frame = Frame(self.container, self)
             self.frames[Frame] = frame
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        self.profile_frame = None
 
         self.show_frame(MainMenu)
 
     def show_frame(self, frame_class):
         self.frames[frame_class].tkraise()
+
+    def open_profile(self, profile_name):
+        if self.profile_frame is not None:
+            self.profile_frame.destroy()
+        self.profile_frame = Profile(self.container, self, profile_name)
+        self.profile_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.profile_frame.tkraise()
 
 
 class MainMenu(ctk.CTkFrame):
@@ -42,17 +52,18 @@ class MainMenu(ctk.CTkFrame):
         #               command=lambda: app.show_frame(Profile)).pack(pady=10)
 
         for profile_name in self.app.profiles:
-            ctk.CTkButton(self, text=profile_name,width=220,
-                      command=lambda: app.show_frame(Profile)).pack(pady=10)
-
+            ctk.CTkButton(self, text=profile_name, width=220,
+                      command=lambda p=profile_name: self.app.open_profile(p)).pack(pady=10)
+        ctk.CTkButton(self, text="Scan Ports", width=220,
+                      command=lambda: app.show_frame(PortScan)).pack(pady=10)
         ctk.CTkButton(self, text="Add Profile", width=220,
                       command=lambda: app.show_frame(AddProfile)).pack(pady=10)
         ctk.CTkButton(self, text="Settings", width=220,
                       command=lambda: app.show_frame(Settings)).pack(pady=10)
 
-    def tkraise(self):
-        super().tkraise()
-        self.after(100, self.refresh_main_menu())
+    def tkraise(self, *args):
+        super().tkraise(*args)
+        self.refresh_main_menu()
 
 
 
@@ -66,6 +77,25 @@ class Settings(ctk.CTkFrame):
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
 
+class PortScan(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color="transparent")
+
+        ctk.CTkLabel(self, text="Scan for open Ports", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
+
+        self.ip_entry = ctk.CTkEntry(self, width=260, placeholder_text="IP address")
+        self.ip_entry.pack(pady=10)
+        ctk.CTkButton(self, text="Start Scan", width=220,
+                      command=self.start_scan).pack(pady=10)
+        ctk.CTkButton(self, text="Go Back to Menu", width=220,
+                      command=lambda: app.show_frame(MainMenu)).pack(pady=10)
+
+    def start_scan(self):
+        host = self.ip_entry.get().strip()
+        if not host:
+            return
+        scanner = PortScanner(host)
+        scanner.run()
 
 class AddProfile(ctk.CTkFrame):
     def __init__(self, parent, app):
@@ -82,24 +112,27 @@ class AddProfile(ctk.CTkFrame):
 
     def create_profile(self):
         profile_name = self.title_entry.get()
-
         if profile_name.strip():
             self.app.profiles.append(profile_name)
-            self.title_entry.delete(0, "end");
+            self.title_entry.delete(0, "end")
             print(f"Profile added: {profile_name}")
             self.app.show_frame(MainMenu)
 
 
 class Profile(ctk.CTkFrame):
-    def __init__(self, parent, app):
+    def __init__(self, parent, app, profile_name):
         super().__init__(parent, fg_color="transparent")
-
-        ctk.CTkLabel(self, text="Profile", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
+        self.profile_name = profile_name
+        ctk.CTkLabel(self, text=profile_name, font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
 
         ctk.CTkButton(self, text="Start Scanning", width=220).pack(pady=10)
         ctk.CTkButton(self, text="History", width=220).pack(pady=10)
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
+
+    def get_profile_name(self):
+        return self.profile_name
+
 
 
 if __name__ == "__main__":
