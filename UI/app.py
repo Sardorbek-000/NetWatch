@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from core.ParsePorts import PortScanner
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -18,7 +19,7 @@ class NetWatchApp(ctk.CTk):
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.frames = {}
-        for Frame in (MainMenu, Settings, AddProfile):
+        for Frame in (MainMenu, Settings, AddProfile, PortScan):
             frame = Frame(self.container, self)
             self.frames[Frame] = frame
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -53,7 +54,8 @@ class MainMenu(ctk.CTkFrame):
         for profile_name in self.app.profiles:
             ctk.CTkButton(self, text=profile_name, width=220,
                       command=lambda p=profile_name: self.app.open_profile(p)).pack(pady=10)
-
+        ctk.CTkButton(self, text="Scan Ports", width=220,
+                      command=lambda: app.show_frame(PortScan)).pack(pady=10)
         ctk.CTkButton(self, text="Add Profile", width=220,
                       command=lambda: app.show_frame(AddProfile)).pack(pady=10)
         ctk.CTkButton(self, text="Settings", width=220,
@@ -75,6 +77,25 @@ class Settings(ctk.CTkFrame):
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
 
+class PortScan(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color="transparent")
+
+        ctk.CTkLabel(self, text="Scan for open Ports", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
+
+        self.ip_entry = ctk.CTkEntry(self, width=260, placeholder_text="IP address")
+        self.ip_entry.pack(pady=10)
+        ctk.CTkButton(self, text="Start Scan", width=220,
+                      command=self.start_scan).pack(pady=10)
+        ctk.CTkButton(self, text="Go Back to Menu", width=220,
+                      command=lambda: app.show_frame(MainMenu)).pack(pady=10)
+
+    def start_scan(self):
+        host = self.ip_entry.get().strip()
+        if not host:
+            return
+        scanner = PortScanner(host)
+        scanner.run()
 
 class AddProfile(ctk.CTkFrame):
     def __init__(self, parent, app):
