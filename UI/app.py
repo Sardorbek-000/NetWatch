@@ -77,10 +77,16 @@ class Settings(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
 
         ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
-
-        ctk.CTkButton(self, text="Delete Profiles", width=220).pack(pady=10)
+        self.title_entry = ctk.CTkEntry(self, width=260, placeholder_text="Profile title")
+        self.title_entry.pack(pady=10)
+        ctk.CTkButton(self, text="Delete Profiles", width=220, command=lambda: self.del_profile(self.title_entry.get())).pack(pady=10)
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
+
+    def del_profile(self, profile_name):
+        app.profiles.remove(profile_name)
+        app.show_frame(MainMenu)
+        self.title_entry.delete(0, "end")
 
 class PortScan(ctk.CTkFrame):
     def __init__(self, parent, app):
