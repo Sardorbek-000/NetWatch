@@ -1,4 +1,5 @@
 import sqlite3 
+import re
 
 
 def create_connection(db_name = "netwatch_db"):
@@ -68,7 +69,29 @@ def create_tables(connection):
                     print(error)
 
 
-                    """week 3: filtering and sorting scan results"""
+                    """validation helpers"""
+
+
+
+                def is_valid_ip(ip):            
+                    # Simple IP address validation (basic)
+                    ip_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+                    if ip_pattern.match(ip):
+                        # Check if each octet is within the valid range 
+                        octets = ip.split('.')
+                        for octet in octets:
+                            if int(octet) > 255:
+                                return False
+                        return True
+                    return False                
+
+                def is_valid_mac(mac):
+                    # Simple MAC address validation (basic)
+                    mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
+                    return bool(mac_pattern.match(mac)) 
+
+
+    """week 3: filtering and sorting scan results"""
 
 def get_devices_by_scan_id(connection, scan_id):
     """Retrieve devices for a specific scan ID"""
