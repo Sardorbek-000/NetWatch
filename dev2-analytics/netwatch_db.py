@@ -214,7 +214,29 @@ def get_devices_by_scan_id(connection, scan_id):
                             return devices
                         except sqlite3.Error as error:
                             print(error)
-                            return []
+                            return []  
 
+                def get_devices_by_subnet(connection, subnet):
+                              """Retrieve devices filtered by subnet"""
+                              try:
+                                  cursor.execute("SELECT * FROM devices WHERE ip LIKE ?", (f"{subnet}%",))
+                                  devices = cursor.fetchall()
+                                  return devices
+                              except sqlite3.Error as error:
+                                  print(error)
+                                  return []         
+
+                              def get_devices_by_hostname_regex(connection, pattern):
+                                  """Retrieve devices filtered by hostname using regex"""
+                                  try:
+                                      cursor.execute("SELECT * FROM devices")
+                                      devices = cursor.fetchall()
+                                      regex = re.compile(pattern, re.IGNORECASE)
+                                      filtered_devices = [device for device in devices if regex.search(device[7])]
+                                      return filtered_devices
+                                  except sqlite3.Error as error:
+                                      print(error)
+                                      return []
                             
-                
+                regex = re.compile(pattern, re.IGNORECASE)
+                return [d for d in all_devices if d[6] and regex.search(d[6])]  # index 6 = hostname]
