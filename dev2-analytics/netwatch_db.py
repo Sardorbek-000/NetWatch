@@ -183,5 +183,15 @@ def get_devices_by_scan_id(connection, scan_id):
                         print(error)
                         return []
 
+                    def get_devices_by_date(connection, start_date, end_date):
+                        """Retrieve devices filtered by a date range"""
+                        try:
+                            cursor.execute("SELECT * FROM devices WHERE timestamp BETWEEN ? AND ?", (start_date, end_date))
+                            devices = cursor.fetchall()
+                            return devices
+                        except sqlite3.Error as error:
+                            print(error)
+                            return []
+
                             
                 
