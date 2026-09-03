@@ -2,7 +2,7 @@ import sqlite3
 import re
 
 
-def create_connection(db_name = "netwatch_db"):
+def create_connection(db_name = "netwatch.db"):
     """ create a database connection to the SQLite database specified by db_name """
     conn = None
     try:
@@ -81,15 +81,13 @@ def is_valid_ip(ip):
                                 return False
                         return True
                     return False            
-
-
- def is_valid_mac(mac):
+def is_valid_mac(mac):
                     # Simple MAC address validation (basic)
                     mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
                     return bool(mac_pattern.match(mac)) 
 
 
-    """week 3: filtering and sorting scan results"""
+"""week 3: filtering and sorting scan results"""
 
 def get_devices_by_scan_id(connection, scan_id):
     """Retrieve devices for a specific scan ID"""
