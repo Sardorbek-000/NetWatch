@@ -102,6 +102,9 @@ class PortScan(ctk.CTkFrame):
         self.ip_entry = ctk.CTkEntry(self, width=260, placeholder_text="IP address")
         self.ip_entry.pack(pady=10)
 
+        self.scan_mode = ctk.CTkSegmentedButton(self, values=["Common Ports", "All Ports (1-65535)"])
+        self.scan_mode.set("Common Ports")
+        self.scan_mode.pack(pady=10)
 
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(pady=10)
@@ -145,8 +148,10 @@ class PortScan(ctk.CTkFrame):
         # self.main_menu_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
 
+        ports = PortScanner.COMMON_PORTS if self.scan_mode.get() == "Common Ports" else None
         self.scanner = PortScanner(
             host,
+            ports=ports,
             on_result=lambda p: self.events.put(("port", p)),
             on_progress=lambda done, total: self.events.put(("progress", done / total)),
             on_done=lambda: self.events.put(("done", None)),
