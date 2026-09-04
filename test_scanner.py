@@ -21,7 +21,6 @@ def get_local_ip():
     #Get the local IPv4 address used for the network connection.    
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            # No real connection is established.
             sock.connect(("8.8.8.8", 80))
             return sock.getsockname()[0]
 
