@@ -2,7 +2,7 @@ import sqlite3
 import re
 
 
-def create_connection(db_name = "netwatch_db"):
+def create_connection(db_name = "netwatch.db"):
     """ create a database connection to the SQLite database specified by db_name """
     conn = None
     try:
@@ -42,8 +42,7 @@ def create_tables(connection):
     except sqlite3.Error as error:
         print(error)
 
-        
-        def save_scan(connection, timestamp, ip_range):
+def  save_scan(connection, timestamp, ip_range):
             """Insert a new scan into the scans table"""
             try:
                 cursor.execute("INSERT INTO scans (timestamp,ip_range) VALUES (?, ?)", (timestamp, ip_range))
@@ -55,8 +54,7 @@ def create_tables(connection):
                 return None
 
 
-
-            def save_scan_results(connection, scan_id, devices):
+def save_scan_results(connection, scan_id, devices):
                 """Insert multiple devices into the devices table for a given scan"""
                 try:
                     cursor.executemany(
@@ -72,8 +70,7 @@ def create_tables(connection):
                     """validation helpers"""
 
 
-
-                def is_valid_ip(ip):            
+def is_valid_ip(ip):            
                     # Simple IP address validation (basic)
                     ip_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
                     if ip_pattern.match(ip):
@@ -83,15 +80,14 @@ def create_tables(connection):
                             if int(octet) > 255:
                                 return False
                         return True
-                    return False                
-
-                def is_valid_mac(mac):
+                    return False            
+def is_valid_mac(mac):
                     # Simple MAC address validation (basic)
                     mac_pattern = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
                     return bool(mac_pattern.match(mac)) 
 
 
-    """week 3: filtering and sorting scan results"""
+"""week 3: filtering and sorting scan results"""
 
 def get_devices_by_scan_id(connection, scan_id):
     """Retrieve devices for a specific scan ID"""
@@ -103,7 +99,7 @@ def get_devices_by_scan_id(connection, scan_id):
         print(error)
         return []
 
-    def get_devices_by_status(connection, status):
+def get_devices_by_status(connection, status):
         """Retrieve devices filtered by status"""
         try:
             cursor.execute("SELECT * FROM devices WHERE status = ?", (status,))
@@ -113,7 +109,7 @@ def get_devices_by_scan_id(connection, scan_id):
             print(error)
             return []
 
-        def get_devices_by_ip_range(connection, ip_range):
+def get_devices_by_ip_range(connection, ip_range):
             """Retrieve devices filtered by IP range"""
             try:
                 cursor.execute("SELECT * FROM devices WHERE ip LIKE ?", (f"{ip_range}%",))
@@ -123,7 +119,7 @@ def get_devices_by_scan_id(connection, scan_id):
                 print(error)
                 return []
 
-            def get_devices_sorted_by_ip(connection):
+def get_devices_sorted_by_ip(connection):
                 """Retrieve all devices sorted by IP address"""
                 try:
                     cursor.execute("SELECT * FROM devices ORDER BY ip ASC")
@@ -133,8 +129,7 @@ def get_devices_by_scan_id(connection, scan_id):
                     print(error)
                     return []
 
-
-                def devices_by_vendor(connection, vendor):
+def devices_by_vendor(connection, vendor):
                     """Retrieve devices filtered by vendor"""
                     try:
                         cursor.execute("SELECT * FROM devices WHERE vendor = ?", (vendor,))
@@ -144,30 +139,7 @@ def get_devices_by_scan_id(connection, scan_id):
                         print(error)
                         return []
 
-
-                    def get_devices_by_hostname(connection, hostname):
-                        """Retrieve devices filtered by hostname"""
-                        try:
-                            cursor.execute("SELECT * FROM devices WHERE hostname = ?", (hostname,))
-                            devices = cursor.fetchall()
-                            return devices
-                        except sqlite3.Error as error:
-                            print(error)
-                            return []
-
-
-                        def get_devices_by_mac(connection, mac):
-                            """Retrieve devices filtered by MAC address"""
-                            try:
-                                cursor.execute("SELECT * FROM devices WHERE mac = ?", (mac,))
-                                devices = cursor.fetchall()
-                                return devices
-                            except sqlite3.Error as error:
-                                print(error)
-                                return []
-
-
-            def get_devices_by_ip(connection, ip):
+def get_devices_by_ip(connection, ip):
                 """Retrieve devices filtered by IP address"""
                 try:
                     cursor.execute("SELECT * FROM devices WHERE ip = ?", (ip,))
@@ -177,7 +149,7 @@ def get_devices_by_scan_id(connection, scan_id):
                     print(error)
                     return []
 
-                def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None, hostname=None, mac=None):
+def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None, hostname=None, mac=None):
                     """Retrieve devices with multiple optional filters"""
                     query = "SELECT * FROM devices WHERE 1=1"
                     params = []
@@ -205,8 +177,8 @@ def get_devices_by_scan_id(connection, scan_id):
                     except sqlite3.Error as error:
                         print(error)
                         return []
-
-                    def get_devices_by_date(connection, start_date, end_date):
+                    
+def get_devices_by_date(connection, start_date, end_date):
                         """Retrieve devices filtered by a date range"""
                         try:
                             cursor.execute("SELECT * FROM devices WHERE timestamp BETWEEN ? AND ?", (start_date, end_date))
@@ -216,19 +188,20 @@ def get_devices_by_scan_id(connection, scan_id):
                             print(error)
                             return []  
 
-                def get_devices_by_subnet(connection, subnet):
-                              """Retrieve devices filtered by subnet"""
-                              try:
+def get_devices_by_subnet(connection, subnet):
+                          """Retrieve devices filtered by subnet"""
+
+                          try:
                                   cursor.execute("SELECT * FROM devices WHERE ip LIKE ?", (f"{subnet}%",))
                                   devices = cursor.fetchall()
                                   return devices
-                              except sqlite3.Error as error:
+                          except sqlite3.Error as error:
                                   print(error)
                                   return []         
 
-                              def get_devices_by_hostname_regex(connection, pattern):
+def get_devices_by_hostname_regex(connection, pattern):
                                   """Retrieve devices filtered by hostname using regex"""
-                                  try:
+                                  try:   
                                       cursor.execute("SELECT * FROM devices")
                                       devices = cursor.fetchall()
                                       regex = re.compile(pattern, re.IGNORECASE)
@@ -238,5 +211,6 @@ def get_devices_by_scan_id(connection, scan_id):
                                       print(error)
                                       return []
                             
-                regex = re.compile(pattern, re.IGNORECASE)
-                return [d for d in all_devices if d[6] and regex.search(d[6])]  # index 6 = hostname]
+                
+
+       
