@@ -179,9 +179,9 @@ def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None
                         return []
                     
 def get_devices_by_date(connection, start_date, end_date):
-                        """Retrieve devices filtered by a date range"""
+                        """Retrieve devices filtered by date range"""
                         try:
-                            cursor.execute("SELECT * FROM devices WHERE timestamp BETWEEN ? AND ?", (start_date, end_date))
+                            cursor.execute("select devices.* from devices join scans on devices.scan_id = scans.id where scans.timestamp between ? and ?", (start_date, end_date))
                             devices = cursor.fetchall()
                             return devices
                         except sqlite3.Error as error:
@@ -192,7 +192,7 @@ def get_devices_by_subnet(connection, subnet):
                           """Retrieve devices filtered by subnet"""
 
                           try:
-                                  cursor.execute("SELECT * FROM devices WHERE ip LIKE ?", (f"{subnet}%",))
+                                  cursor.execute("select devices.* from devices join scans on devices.scan_id = scans.id where scans.ip LIKE ?", (f"{subnet}%",))
                                   devices = cursor.fetchall()
                                   return devices
                           except sqlite3.Error as error:
@@ -205,7 +205,7 @@ def get_devices_by_hostname_regex(connection, pattern):
                                       cursor.execute("SELECT * FROM devices")
                                       devices = cursor.fetchall()
                                       regex = re.compile(pattern, re.IGNORECASE)
-                                      filtered_devices = [device for device in devices if regex.search(device[7])]
+                                      filtered_devices = [device for device in devices if device[6] and regex.search(device[6])]
                                       return filtered_devices
                                   except sqlite3.Error as error:
                                       print(error)
