@@ -13,11 +13,12 @@ def create_connection(db_name = "netwatch.db"):
     return conn
 
 connection = create_connection('netwatch.db')
-cursor = connection.cursor()
 
 def create_tables(connection):
     """ create tables in the SQLite database """
     try:
+        
+        cursor = connection.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS scans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +46,7 @@ def create_tables(connection):
 def  save_scan(connection, timestamp, ip_range):
             """Insert a new scan into the scans table"""
             try:
+                cursor = connection.cursor()
                 cursor.execute("INSERT INTO scans (timestamp,ip_range) VALUES (?, ?)", (timestamp, ip_range))
                 connection.commit()
                 print(f"Scan saved with timestamp: {timestamp}")
@@ -57,6 +59,7 @@ def  save_scan(connection, timestamp, ip_range):
 def save_scan_results(connection, scan_id, devices):
                 """Insert multiple devices into the devices table for a given scan"""
                 try:
+                    cursor = connection.cursor()
                     cursor.executemany(
                         "INSERT INTO devices (scan_id, ip, mac, vendor, status, hostname) VALUES (?, ?, ?, ?, ?, ?)",
                         [(scan_id, device['ip'], device['mac'], device.get('vendor'), device.get('status'), device.get('hostname')) for device in devices]
@@ -87,11 +90,26 @@ def is_valid_mac(mac):
                     return bool(mac_pattern.match(mac)) 
 
 
+def is_valid_ip_range(ip_range):
+                    ip_range_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$')
+                    if ip_range_pattern.match(ip_range):
+                        # Check if the IP part is valid
+                        ip_part, prefix_length = ip_range.split('/')
+                        if not is_valid_ip(ip_part):
+                            return False
+                    
+                        if not (0 <= int(prefix_length) <= 32):
+                            return False
+                        return True
+                    return False
+
+
 """week 3: filtering and sorting scan results"""
 
 def get_devices_by_scan_id(connection, scan_id):
     """Retrieve devices for a specific scan ID"""
     try:
+        cursor = connection.cursor()
         cursor.execute("SELECT * FROM devices WHERE scan_id = ?", (scan_id,))
         devices = cursor.fetchall()
         return devices
@@ -102,6 +120,7 @@ def get_devices_by_scan_id(connection, scan_id):
 def get_devices_by_status(connection, status):
         """Retrieve devices filtered by status"""
         try:
+            cursor = connection.cursor()
             cursor.execute("SELECT * FROM devices WHERE status = ?", (status,))
             devices = cursor.fetchall()
             return devices
@@ -112,6 +131,7 @@ def get_devices_by_status(connection, status):
 def get_devices_by_ip_range(connection, ip_range):
             """Retrieve devices filtered by IP range"""
             try:
+                cursor = connection.cursor()
                 cursor.execute("SELECT * FROM devices WHERE ip LIKE ?", (f"{ip_range}%",))
                 devices = cursor.fetchall()
                 return devices
@@ -122,6 +142,8 @@ def get_devices_by_ip_range(connection, ip_range):
 def get_devices_sorted_by_ip(connection):
                 """Retrieve all devices sorted by IP address"""
                 try:
+                    cursor = connection.cursor()
+
                     cursor.execute("SELECT * FROM devices ORDER BY ip ASC")
                     devices = cursor.fetchall()
                     return devices
@@ -132,6 +154,7 @@ def get_devices_sorted_by_ip(connection):
 def devices_by_vendor(connection, vendor):
                     """Retrieve devices filtered by vendor"""
                     try:
+                        cursor = connection.cursor()
                         cursor.execute("SELECT * FROM devices WHERE vendor = ?", (vendor,))
                         devices = cursor.fetchall()
                         return devices
@@ -142,6 +165,7 @@ def devices_by_vendor(connection, vendor):
 def get_devices_by_ip(connection, ip):
                 """Retrieve devices filtered by IP address"""
                 try:
+                    cursor = connection.cursor()
                     cursor.execute("SELECT * FROM devices WHERE ip = ?", (ip,))
                     devices = cursor.fetchall()
                     return devices
@@ -149,7 +173,7 @@ def get_devices_by_ip(connection, ip):
                     print(error)
                     return []
 
-def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None, hostname=None, mac=None):
+def get_devices_with_filters(connection, status=None, ip_range=None, vendor=None, hostname=None, mac=None):
                     """Retrieve devices with multiple optional filters"""
                     query = "SELECT * FROM devices WHERE 1=1"
                     params = []
@@ -171,6 +195,7 @@ def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None
                         params.append(mac)
 
                     try:
+                        cursor = connection.cursor()
                         cursor.execute(query, tuple(params))
                         devices = cursor.fetchall()
                         return devices
@@ -181,6 +206,7 @@ def get_devices_with_filters(CONNECTION, status=None, ip_range=None, vendor=None
 def get_devices_by_date(connection, start_date, end_date):
                         """Retrieve devices filtered by date range"""
                         try:
+                            cursor = connection.cursor()
                             cursor.execute("select devices.* from devices join scans on devices.scan_id = scans.id where scans.timestamp between ? and ?", (start_date, end_date))
                             devices = cursor.fetchall()
                             return devices
@@ -190,9 +216,12 @@ def get_devices_by_date(connection, start_date, end_date):
 
 def get_devices_by_subnet(connection, subnet):
                           """Retrieve devices filtered by subnet"""
+                          if not is_valid_ip_range(subnet):
+                              return []
 
                           try:
-                                  cursor.execute("select devices.* from devices join scans on devices.scan_id = scans.id where scans.ip LIKE ?", (f"{subnet}%",))
+                                  cursor = connection.cursor()
+                                  cursor.execute("select devices.* from devices join scans on devices.scan_id = scans.id where scans.ip_range LIKE ?", (f"{subnet}%",))
                                   devices = cursor.fetchall()
                                   return devices
                           except sqlite3.Error as error:
@@ -202,6 +231,7 @@ def get_devices_by_subnet(connection, subnet):
 def get_devices_by_hostname_regex(connection, pattern):
                                   """Retrieve devices filtered by hostname using regex"""
                                   try:   
+                                      cursor = connection.cursor()
                                       cursor.execute("SELECT * FROM devices")
                                       devices = cursor.fetchall()
                                       regex = re.compile(pattern, re.IGNORECASE)
