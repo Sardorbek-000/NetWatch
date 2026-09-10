@@ -242,7 +242,25 @@ def get_devices_by_hostname_regex(connection, pattern):
                                       print(error)
                                       return []
 
-                                  "network health score calculation"
+
+
+def record_scan(connection, timestamp, ip_range, devices, offline_status_values = ("offline", "down")):
+        
+        scan_id = save_scan(connection, timestamp, ip_range)
+        if scan_id is None:
+                return None, None
+
+        save_scan_results(connection, scan_id, devices)
+        health_data = solve_health_score(connection, scan_id, offline_status_values)
+        if health_data is not None:
+                save_health_score(connection, scan_id, health_data)
+
+                return scan_id, health_data
+
+    
+        
+          
+                                  
 
 def get_last_scan(connection, current_scan_id,ip_range):
 
@@ -349,6 +367,7 @@ def get_health_score(connection, scan_id):
               cursor = connection.cursor()
               cursor.execute("SELECT * FROM health_scores WHERE scan_id = ?", (scan_id,))
               row = cursor.fetchone()
+              return row if row else None
         except sqlite3.Error as error:
                       print(error)
                       return None
