@@ -1,11 +1,10 @@
-# --- UPDATED: stdlib imports needed for threaded scanning ---
 import queue
 import socket
 import threading
 
 import customtkinter as ctk
 from core.ParsePorts import PortScanner
-
+from notifier import notify
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -93,7 +92,6 @@ class PortScan(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.app = app
 
-        # --- UPDATED: scan state + thread-safe channel from worker to UI ---
         self.scanner = None
         self.events = queue.Queue()
 
@@ -116,20 +114,16 @@ class PortScan(ctk.CTkFrame):
                                       command=self.stop_scan, state="disabled")
         self.stop_btn.pack(side="left", padx=5)
 
-        # --- FIX: .pack() returns None, so this must be two statements or
-        #     self.main_menu_btn is None and .configure() below crashes ---
         self.main_menu_btn = ctk.CTkButton(self, text="Go Back to Menu", width=220,
                                            command=lambda: app.show_frame(MainMenu))
         self.main_menu_btn.pack(pady=10)
 
-        # --- UPDATED: progress bar + status line ---
         self.progress = ctk.CTkProgressBar(self, width=260)
         self.progress.set(0)
         self.progress.pack(pady=(10, 4))
         self.status = ctk.CTkLabel(self, text="")
         self.status.pack()
 
-        # --- UPDATED: scrollable list that shows the open ports ---
         self.results = ctk.CTkScrollableFrame(self, width=300, height=180,
                                               label_text="Open ports")
         self.results.pack(pady=10, fill="both", expand=True)
@@ -139,7 +133,7 @@ class PortScan(ctk.CTkFrame):
         host = self.ip_entry.get().strip()
         if not host or self.scanner is not None:
             return
-
+        notify("Port scanning", "started port scanning")
         for w in self.results.winfo_children():
             w.destroy()
         self.progress.set(0)
