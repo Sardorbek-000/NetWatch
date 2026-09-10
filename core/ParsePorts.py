@@ -1,7 +1,6 @@
 import queue          # --- FIX: work queue for the fixed worker pool ---
 import socket
 import threading
-
 from database.PortParsingDatabase import ParsePortsDb
 
 
@@ -41,7 +40,6 @@ class PortScanner:
     def scan_port(self, port):
         if self._stop.is_set():
             return
-
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(self.timeout)
         try:
