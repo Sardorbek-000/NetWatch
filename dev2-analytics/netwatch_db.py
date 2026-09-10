@@ -1,3 +1,4 @@
+from copy import error
 import sqlite3 
 import re
 
@@ -240,7 +241,141 @@ def get_devices_by_hostname_regex(connection, pattern):
                                   except sqlite3.Error as error:
                                       print(error)
                                       return []
-                            
-                
 
-       
+                                  "network health score calculation"
+
+def get_last_scan(connection, current_scan_id,ip_range):
+
+        try:
+                cursor = connection.cursor()
+                cursor.execute(
+                        """
+                        select id  from scans
+                        where ip_range = ?
+                        and timestamp < (select timestamp from scans where id = ?)
+                                         order by timestamp desc limit 1
+                                         """, 
+                                         (ip_range, current_scan_id)
+                )
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except sqlite3.Error as error:
+                print(error)
+                return None
+
+def solve_health_score(connection, scan_id, offline_status_values = ("offline", "down")):
+
+        """Calculate the network health score for a given scan ID"""
+        try:
+                cursor = connection.cursor()
+                cursor.execute("select ip_range from scans where id = ?", (scan_id,))
+                row = cursor.fetchone()
+                if not row:
+                        return None
+                ip_range = row[0]
+
+                current_devices = get_devices_by_scan_id(connection, scan_id)
+                current_macs = {device[3] for device in current_devices}
+
+                previous_scan_id = get_last_scan(connection, scan_id, ip_range)
+                if previous_scan_id:
+                        last_devices = get_devices_by_scan_id(connection, previous_scan_id)
+                        previous_macs = {device[3] for device in last_devices}
+
+                else:
+                                previous_macs = set()
+
+
+                new_devices = len(current_macs - previous_macs)
+                missing_devices = len(previous_macs - current_macs)
+                unkwown_vendors = sum(1 for device in current_devices if not device[4])
+                offline_devices = sum(1 for device in current_devices if device[5] in offline_status_values)
+
+                total_devices = len(current_devices) or 1 
+
+                penalty = (
+                        (new_devices / total_devices) * 25
+                        + (missing_devices / total_devices) * 25
+                        + (unkwown_vendors / total_devices) * 25    
+                        + (offline_devices / total_devices) * 25
+
+                )
+
+                score = max(0, round(100 - penalty, 2))
+
+                return {
+                        "score": score,
+                        "new_devices": new_devices,
+                        "missing_devices": missing_devices,
+                        "unknown_vendors": unkwown_vendors,
+                        "offline_devices": offline_devices
+                }
+
+        except sqlite3.Error as error:
+                print(error)
+                return None
+
+
+
+def save_health_score(connection, scan_id, health_score_data):
+        
+        try:
+                cursor = connection.cursor()
+                cursor.execute(
+                        """
+                        insert into health_scores
+                          (scan_id, score, new_devices, missing_devices, unknown_vendors, offline_devices)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                                scan_id,
+                                health_score_data["score"],
+                                health_score_data["new_devices"],
+                                health_score_data["missing_devices"],
+                                health_score_data["unknown_vendors"],
+                                health_score_data["offline_devices"]
+                        )
+                )
+                connection.commit()
+                print(f"Health score saved for scan ID: {scan_id}")
+                return cursor.lastrowid
+        except sqlite3.Error as error:
+                print(error)
+
+
+def get_health_score(connection, scan_id):
+
+        try:
+              cursor = connection.cursor()
+              cursor.execute("SELECT * FROM health_scores WHERE scan_id = ?", (scan_id,))
+              row = cursor.fetchone()
+        except sqlite3.Error as error:
+                      print(error)
+                      return None
+                
+                      
+
+def get_health_trend(connection, start_date, end_date):
+                        
+                        try:
+                                cursor = connection.cursor()
+                                cursor.execute(
+
+                        """
+
+
+                        select scans.timestamp, health_scores.score, health_scores.new_devices, health_scores.missing_devices,
+                          health_scores.unknown_vendors, health_scores.offline_devices
+                          from health_scores
+                          join scans  on health_scores.scan_id = scans.id
+                          where scans.timestamp between ? and ?
+                          order by scans.timestamp asc
+
+                        """,
+                        (start_date, end_date)
+
+                        )
+                                return cursor.fetchall()
+                        except sqlite3.Error as error:
+                                print(error)
+                                return []
