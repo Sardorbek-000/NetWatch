@@ -39,6 +39,21 @@ def create_tables(connection):
                 FOREIGN KEY (scan_id) REFERENCES scans (id)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS health_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id INTEGER NOT NULL,
+                score REAL NOT NULL,
+                new_devices INTEGER NOT,
+                missing_devices INTEGER,
+                uknown_devices INTEGER,
+                offline_devices INTEGER,
+                FOREIGN KEY (scan_id) REFERENCES scans (id)
+
+
+                      """ )
+        
+        
         connection.commit()
         print("Tables created successfully.")
     except sqlite3.Error as error:
