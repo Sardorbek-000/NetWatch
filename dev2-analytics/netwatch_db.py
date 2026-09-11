@@ -15,52 +15,7 @@ def create_connection(db_name = "netwatch.db"):
 
 connection = create_connection('netwatch.db')
 
-def create_tables(connection):
-    """ create tables in the SQLite database """
-    try:
-        
-        cursor = connection.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS scans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                ip_range TEXT NOT NULL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS devices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_id INTEGER NOT NULL,
-                ip TEXT NOT NULL,
-                mac TEXT NOT NULL,
-                vendor TEXT,
-                status TEXT,
-                hostname TEXT,
-                FOREIGN KEY (scan_id) REFERENCES scans (id)
 
-
-          """)
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS health_scores (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                scan_id INTEGER NOT NULL,
-                score REAL NOT NULL,
-                new_devices INTEGER ,
-                missing_devices INTEGER,
-                unknown_devices INTEGER,
-                offline_devices INTEGER,
-                FOREIGN KEY (scan_id) REFERENCES scans (id)
-            )
-
-
-                      """ )
-        
-        
-        connection.commit()
-        print("Tables created successfully.")
-    except sqlite3.Error as error:
-        print(error)
 
 def  save_scan(connection, timestamp, ip_range):
             """Insert a new scan into the scans table"""
@@ -91,6 +46,48 @@ def save_scan_results(connection, scan_id, devices):
 
                     """validation helpers"""
 
+                    
+def create_tables(connection):
+    """ create tables in the SQLite database """
+    try:
+        
+        cursor = connection.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS scans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                ip_range TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id INTEGER NOT NULL,
+                ip TEXT NOT NULL,
+                mac TEXT NOT NULL,
+                vendor TEXT,
+                status TEXT,
+                hostname TEXT,
+                FOREIGN KEY (scan_id) REFERENCES scans (id)
+            )
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS health_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id INTEGER NOT NULL,
+                score REAL NOT NULL,
+                new_devices INTEGER,
+                missing_devices INTEGER,
+                unknown_vendors INTEGER,
+                offline_devices INTEGER,
+                FOREIGN KEY (scan_id) REFERENCES scans (id)
+            )
+        """)
+        connection.commit()
+        print("Tables created successfully.")
+    except sqlite3.Error as error:
+        print(error)
 
 def is_valid_ip(ip):            
                     # Simple IP address validation (basic)
