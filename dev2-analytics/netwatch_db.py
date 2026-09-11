@@ -37,18 +37,21 @@ def create_tables(connection):
                 status TEXT,
                 hostname TEXT,
                 FOREIGN KEY (scan_id) REFERENCES scans (id)
-            )
-        """)
+
+
+          """)
+        
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS health_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 scan_id INTEGER NOT NULL,
                 score REAL NOT NULL,
-                new_devices INTEGER NOT,
+                new_devices INTEGER ,
                 missing_devices INTEGER,
-                uknown_devices INTEGER,
+                unknown_devices INTEGER,
                 offline_devices INTEGER,
                 FOREIGN KEY (scan_id) REFERENCES scans (id)
+            )
 
 
                       """ )
