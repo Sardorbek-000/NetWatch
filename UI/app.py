@@ -14,7 +14,7 @@ class NetWatchApp(ctk.CTk):
         super().__init__()
 
         self.title("NetWatch")
-        self.geometry("800x500")
+        self.geometry("900x600")
         self.minsize(640, 420)
 
         self.profiles = []
@@ -74,18 +74,54 @@ class MainMenu(ctk.CTkFrame):
 class Settings(ctk.CTkFrame):
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
+        self.app = app
+        self.selected = set()
+        self.profile_buttons = {}
 
-        ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
-        self.title_entry = ctk.CTkEntry(self, width=260, placeholder_text="Profile title")
-        self.title_entry.pack(pady=10)
-        ctk.CTkButton(self, text="Delete Profiles", width=220, command=lambda: self.del_profile(self.title_entry.get())).pack(pady=10)
+        ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 20))
+
+        self.profile_list = ctk.CTkScrollableFrame(self, width=260, height=220, label_text="Profiles")
+        self.profile_list.pack(pady=10)
+
+        self.delete_btn = ctk.CTkButton(self, text="Delete Selected", width=220, fg_color="darkred",
+                                        hover_color="#8b0000", state="disabled",
+                                        command=self.delete_selected)
+        self.delete_btn.pack(pady=10)
         ctk.CTkButton(self, text="Go Back to Menu", width=220,
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
 
-    def del_profile(self, profile_name):
-        app.profiles.remove(profile_name)
-        app.show_frame(MainMenu)
-        self.title_entry.delete(0, "end")
+    def refresh_profiles(self):
+        for widget in self.profile_list.winfo_children():
+            widget.destroy()
+        self.selected.clear()
+        self.profile_buttons.clear()
+        self.delete_btn.configure(state="disabled")
+
+        for profile_name in self.app.profiles:
+            btn = ctk.CTkButton(self.profile_list, text=profile_name, width=220,
+                                fg_color="transparent", border_width=1,
+                                command=lambda p=profile_name: self.toggle_profile(p))
+            btn.pack(pady=5)
+            self.profile_buttons[profile_name] = btn
+
+    def toggle_profile(self, profile_name):
+        btn = self.profile_buttons[profile_name]
+        if profile_name in self.selected:
+            self.selected.remove(profile_name)
+            btn.configure(fg_color="transparent")
+        else:
+            self.selected.add(profile_name)
+            btn.configure(fg_color="darkred")
+        self.delete_btn.configure(state="normal" if self.selected else "disabled")
+
+    def delete_selected(self):
+        for profile_name in self.selected:
+            self.app.profiles.remove(profile_name)
+        self.refresh_profiles()
+
+    def tkraise(self, *args):
+        super().tkraise(*args)
+        self.refresh_profiles()
 
 class PortScan(ctk.CTkFrame):
     def __init__(self, parent, app):
