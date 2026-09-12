@@ -1,25 +1,26 @@
 """
 NetWatch — Data Collection Module (Backend Dev 1)
 ====================================================
-Wireless scanning part
 
-A separate LANScanner (wired) will be added later — it will subclass
-BaseScanner (below) and reuse arp_scan_subnet() as-is, so almost no
-logic needs to be duplicated when that's written.
+Local network device discovery via ARP: WirelessScanner (Wi-Fi) and
+LANScanner (wired Ethernet). Both return every device that answers on
+the subnet: IP, MAC, vendor, hostname (best-effort).
 
-
+They share one implementation (_ArpBasedScanner) — the only real
+difference between them is which network interface gets auto-detected
+by default. Pick whichever matches how a given Location Profile connects.
 
 ----------------------------------------------------------------------
-IMPORTANT TO REAM FOR MY TEAMMATES 
+HOW OTHER DEVS PLUG INTO THIS
 ----------------------------------------------------------------------
+Data Processing / Storage (Backend Dev 2) — get every scan automatically,
+same pattern for either scanner:
 
-ETHAN (Backend Dev 2) — get every scan automatically:
-
-    scanner = WirelessScanner()
+    scanner = WirelessScanner()   # or LANScanner() for a wired profile
     scanner.register_callback(lambda devices, scan_time: storage.save_scan(devices, scan_time))
     scanner.start_periodic_scan(interval_minutes=5)
 
-AMIN (Tkinter/CustomTkinter dev) — read the latest result without
+Frontend (Tkinter/CustomTkinter dev) — read the latest result without
 triggering a new scan, and run on-demand scans off the UI thread:
 
     devices, when = scanner.get_last_scan()
@@ -27,16 +28,20 @@ triggering a new scan, and run on-demand scans off the UI thread:
     def on_scan_now_button_click():
         threading.Thread(target=scanner.scan_now, daemon=True).start()
 
+Choosing which scanner to use per Location Profile (e.g. a Settings
+toggle "This network is: Wi-Fi / Wired"):
+
+    scanner = WirelessScanner() if profile.connection_type == "wifi" else LANScanner()
+
 If you show which interface is active in the UI, use
 get_interface_display_name(scanner.iface) rather than scanner.iface
 directly — on Windows, scanner.iface is often a raw GUID, not "Wi-Fi".
 
 Each `Device` has `.to_dict()` for easy handoff to SQLite / JSON / the UI.
 
-
-
-
----SETUP---
+----------------------------------------------------------------------
+SETUP
+----------------------------------------------------------------------
     pip install scapy mac-vendor-lookup
 
     Windows: also install Npcap (https://npcap.com/#download) — tick
@@ -48,6 +53,15 @@ Each `Device` has `.to_dict()` for easy handoff to SQLite / JSON / the UI.
 Raw ARP packets require admin/root. See InsufficientPrivilegesError below —
 catch it in the Frontend to show the "run as admin/root" prompt mentioned
 in the architecture doc's "Scan Now" flow.
+
+----------------------------------------------------------------------
+NOTE ON "status"
+----------------------------------------------------------------------
+Every device found here gets status="online" — that's all Module 1 can
+honestly claim (it answered THIS scan). Deciding "new device" / "device
+disconnected" is a historical judgement that needs the previous scan(s),
+which is Module 2's job once it owns the SQLite history. Module 1 only
+needs to hand over clean, consistent snapshots for that comparison to work.
 """
 
 from __future__ import annotations
@@ -61,6 +75,7 @@ import socket
 import struct
 import subprocess
 import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -84,25 +99,24 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-
-
-
+# --------------------------------------------------------------------------- #
+# Logging — library-style: we don't configure handlers, the app does.
 # Other devs can see what's happening with: logging.basicConfig(level=logging.INFO)
-
+# --------------------------------------------------------------------------- #
 logger = logging.getLogger("netwatch.data_collection")
 logger.addHandler(logging.NullHandler())
 
 
-
-
+# --------------------------------------------------------------------------- #
 # Custom exceptions — catch these specifically in the Frontend/UI layer
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 class InsufficientPrivilegesError(PermissionError):
     """
     Raised when ARP scanning fails because we don't have admin/root rights
     (raw sockets require elevation).
 
-    AMIN: catch this to show the "please run as Administrator / root"
+    Frontend: catch this to show the "please run as Administrator / root"
+    dialog described in the architecture doc's Scan Now flow.
     """
 
 
@@ -110,12 +124,9 @@ class NoNetworkInterfaceError(RuntimeError):
     """Raised when the target interface doesn't exist, is down, or scanning otherwise can't proceed."""
 
 
-
-
-
-
+# --------------------------------------------------------------------------- #
 # Data model — this is the exact shape Module 2 should persist per device
-# --------------------------------------------------------------------------- 
+# --------------------------------------------------------------------------- #
 @dataclass
 class Device:
     """One discovered device from a single scan."""
@@ -124,7 +135,7 @@ class Device:
     mac: str
     vendor: str
     hostname: str | None
-    status: str  # always "online" here 
+    status: str  # always "online" here — see module docstring note above
     last_seen: str  # ISO-8601 timestamp string — easy to store/sort/compare in SQLite
 
     def to_dict(self) -> dict:
@@ -132,19 +143,26 @@ class Device:
         return asdict(self)
 
 
-
-
-
+# --------------------------------------------------------------------------- #
 # Low-level ARP scan — deliberately standalone so the future LANScanner can
 # import and reuse it without copy-pasting this logic.
-# --------------------------------------------------------------------------- 
+# --------------------------------------------------------------------------- #
 def arp_scan_subnet(
     subnet_cidr: str,
     iface: str | None = None,
     timeout: float = 3.0,
+    retry: int = 2,
 ) -> list[tuple[str, str]]:
     """
     Broadcasts an ARP request across `subnet_cidr` and collects replies.
+
+    `retry` re-sends to hosts that haven't answered yet within `timeout`
+    (default 2) — some phones/IoT devices are slow to respond to
+    broadcast ARP while in Wi-Fi power-save mode, and a single pass can
+    miss them. This does NOT help if the access point enforces client
+    isolation (some mobile hotspots block clients from seeing each other
+    at all) — that's a network-level restriction no amount of retrying
+    can work around from this end.
 
     Returns:
         List of (ip, mac) tuples for every device that answered.
@@ -153,14 +171,14 @@ def arp_scan_subnet(
         InsufficientPrivilegesError: no admin/root rights.
         NoNetworkInterfaceError: bad/absent interface, or a Scapy-level failure.
     """
-    logger.debug("Starting ARP scan on %s via iface=%s", subnet_cidr, iface or "default")
+    logger.debug("Starting ARP scan on %s via iface=%s (retry=%d)", subnet_cidr, iface or "default", retry)
 
     arp_request = ARP(pdst=subnet_cidr)
     broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
     packet = broadcast / arp_request
 
     try:
-        answered, _unanswered = srp(packet, timeout=timeout, iface=iface, verbose=False)
+        answered, _unanswered = srp(packet, timeout=timeout, iface=iface, retry=retry, verbose=False)
     except PermissionError as exc:
         raise InsufficientPrivilegesError(
             "Raw socket access denied. Run NetWatch as Administrator (Windows) or with "
@@ -177,9 +195,9 @@ def arp_scan_subnet(
     return results
 
 
-
-
-# MAC vendor resolution — wraps mac-vendor-lookup with a local cache so we don't repeat the same lookup every scan cycle.
+# --------------------------------------------------------------------------- #
+# MAC vendor resolution — wraps mac-vendor-lookup with a local cache so we
+# don't repeat the same lookup every scan cycle.
 # --------------------------------------------------------------------------- #
 class VendorResolver:
     """Downloads/caches the IEEE OUI database once, then resolves MAC -> vendor name offline."""
@@ -194,7 +212,7 @@ class VendorResolver:
     def _start_background_download(self) -> None:
         """
         Kicks off the (slow, network-dependent) OUI database download on a
-        daemon thread, exactly once completely non-blocking — nothing
+        daemon thread, exactly once, completely non-blocking — nothing
         ever calls .join() on it. Lazily triggered from resolve() on first
         use instead of running in WirelessScanner.__init__, so constructing
         a scanner (and the app starting up) never waits on the network.
@@ -249,7 +267,7 @@ _IN_QCLASS = 1
 
 
 def _encode_dns_name(name: str) -> bytes:
-    """DNS wire-format encoding of a dotted name, e.g. 'a.b.c' length-prefixed labels + null byte."""
+    """DNS wire-format encoding of a dotted name, e.g. 'a.b.c' -> length-prefixed labels + null byte."""
     parts = name.strip(".").split(".")
     return b"".join(bytes([len(p)]) + p.encode("ascii") for p in parts) + b"\x00"
 
@@ -276,10 +294,10 @@ def _decode_dns_name(packet: bytes, offset: int) -> tuple[str, int]:
     just past the name in the ORIGINAL stream — not the jumped-to spot).
 
     Hardened against malformed/malicious responses:
-      every byte access is bounds-checked against len(packet) first
-      pointer jumps are capped AND each jump target is tracked, so a
+      - every byte access is bounds-checked against len(packet) first
+      - pointer jumps are capped AND each jump target is tracked, so a
         cycle (offset A -> B -> A) raises instead of looping forever
-      total decoded name length is capped per RFC 1035
+      - total decoded name length is capped per RFC 1035
     Raises _MalformedDnsResponse on any violation — never raises a raw
     IndexError/struct.error, and never loops indefinitely.
     """
@@ -494,14 +512,16 @@ def resolve_hostname(ip: str, timeout: float = 1.0, dns_server: str | None = Non
     return _parse_ptr_response(data, transaction_id)
 
 
-
-
-
+# --------------------------------------------------------------------------- #
 # Local network auto-detection
-# --------------------------------------------------------------------------- 
+# --------------------------------------------------------------------------- #
 def get_local_ip() -> str:
     """
     Returns this machine's LAN IP.
+    Trick: "connect" a UDP socket to a public IP — nothing is actually sent
+    (UDP is connectionless), it just makes the OS report the right local
+    outbound IP for us.
+
     Falls back to 127.0.0.1 if there's no network route at all (e.g. Wi-Fi
     is off, cable unplugged) — so constructing a scanner while offline
     doesn't crash the app on startup. The resulting scan just won't find
@@ -533,11 +553,73 @@ def guess_subnet_cidr(prefix_length: int = 24) -> str:
 
 
 def guess_wireless_interface() -> str | None:
+    """
+    Best-effort autodetect of the active network adapter's identifier, so
+    Scapy knows which NIC to send ARP packets on.
+
+    This value is for SCAPY, not for display — on Windows it's frequently
+    a raw GUID (e.g. "{4A1B2C3D-...}") rather than "Wi-Fi", because that's
+    what Scapy/Npcap key adapters by internally. If you need to SHOW the
+    active interface in the UI, use get_interface_display_name() below
+    instead of this value directly.
+
+    Returning None is fine too: Scapy/the OS will pick the default route's
+    interface, correct on a laptop that's only connected via Wi-Fi.
+
+    Settings should let the user override this per profile if autodetect
+    ever guesses wrong (e.g. machine has both Wi-Fi and Ethernet active).
+    """
     try:
         return conf.iface.name if conf.iface else None
     except Exception as exc:
         logger.debug("Could not auto-detect interface: %s", exc)
         return None
+
+
+def guess_wired_interface() -> str | None:
+    """
+    Best-effort autodetect of the active WIRED (Ethernet) adapter.
+    Windows/Linux only, matching this project's target platforms.
+
+    Unlike guess_wireless_interface() — which just takes whatever Scapy
+    considers the default-route interface, Wi-Fi or not — this explicitly
+    filters OUT anything that looks wireless/virtual, so a laptop with
+    both Wi-Fi and a USB-Ethernet dongle active picks the cable:
+        Linux:   accepts eth*/en*/eno*/ens*/enp*, rejects wl*/lo/docker/
+                 veth/br-/virbr/tun/tap
+        Windows: accepts adapters whose description doesn't mention
+                 "wireless"/"Wi-Fi"/"WLAN", and isn't virtual/VPN/Bluetooth
+
+    Falls back to guess_wireless_interface()'s "default route" behavior if
+    no dedicated wired adapter is found, then to None — same fallback
+    chain as the wireless guesser. Settings should let the user override
+    this per profile either way.
+    """
+    try:
+        if platform.system() == "Windows":
+            from scapy.arch.windows import get_windows_if_list  # Windows-only, imported lazily
+
+            for entry in get_windows_if_list():
+                description = (entry.get("description") or "").lower()
+                name = (entry.get("name") or "").lower()
+                looks_wireless = any(kw in description or kw in name for kw in ("wireless", "wi-fi", "wifi", "wlan"))
+                looks_virtual = any(kw in description for kw in ("virtual", "loopback", "vpn", "bluetooth"))
+                if not looks_wireless and not looks_virtual and entry.get("guid"):
+                    return entry["guid"]
+        else:
+            from scapy.all import get_if_list  # noqa: local import mirrors the Windows branch above
+
+            for name in get_if_list():
+                lname = name.lower()
+                if lname.startswith(("wl", "lo", "docker", "veth", "br-", "virbr", "tun", "tap")):
+                    continue
+                if lname.startswith(("eth", "en", "eno", "ens", "enp")):
+                    return name
+    except Exception as exc:
+        logger.debug("Could not enumerate wired interfaces: %s", exc)
+
+    logger.debug("No dedicated wired interface found — falling back to the default-route interface")
+    return guess_wireless_interface()  # same "default route" fallback the wireless scanner uses
 
 
 def get_interface_display_name(iface: str | None) -> str:
@@ -566,13 +648,12 @@ def get_interface_display_name(iface: str | None) -> str:
     return iface
 
 
-
-
-
-
+# --------------------------------------------------------------------------- #
 # BaseScanner — shared skeleton for any scanner (Wireless now, LAN later).
-# Handles periodic scanning on a background thread, on-demand scans, thread-safe access to the last result, and the callback mechanism other modules use to receive fresh scan data. Subclasses just implement scan().
-# --------------------------------------------------------------------------- 
+# Handles periodic scanning on a background thread, on-demand scans,
+# thread-safe access to the last result, and the callback mechanism other
+# modules use to receive fresh scan data. Subclasses just implement scan().
+# --------------------------------------------------------------------------- #
 class BaseScanner(ABC):
     def __init__(self) -> None:
         self._callbacks: list[Callable[[list[Device], datetime], None]] = []
@@ -583,20 +664,20 @@ class BaseScanner(ABC):
         self._stop_event = threading.Event()
         self._scan_thread: threading.Thread | None = None
         self._interval_seconds: int | None = None
+        self._scan_deadline: float | None = None  # time.monotonic() value; None = run forever
 
     @abstractmethod
     def scan(self) -> list[Device]:
-        """Perform ONE scan and return the devices found."""
+        """Perform ONE scan and return the devices found. Implemented by each subclass."""
         raise NotImplementedError
 
-    
-    
-    
-    
-    # Public API — this is what ETHAN (storage) / AMIN 3 (UI) use
+    # ------------------------------------------------------------------ #
+    # Public API — this is what Module 2 (storage) / Module 3 (UI) use
     # ------------------------------------------------------------------ #
     def register_callback(self, callback: Callable[[list[Device], datetime], None]) -> None:
         """
+        Subscribe to be notified every time a scan finishes (scheduled OR on-demand).
+
         `callback(devices, scan_time)` receives:
             devices:   list[Device]  — result of that scan
             scan_time: datetime      — when the scan completed
@@ -628,17 +709,32 @@ class BaseScanner(ABC):
         self._notify_callbacks(devices, scan_time)
         return devices
 
-    def start_periodic_scan(self, interval_minutes: float) -> None:
-        """Starts scanning every `interval_minutes` on a daemon background thread. Returns immediately."""
+    def start_periodic_scan(self, interval_minutes: float, duration_hours: float | None = None) -> None:
+        """
+        Starts scanning every `interval_minutes` on a daemon background thread.
+        Returns immediately — safe to call from the Tkinter main thread.
+
+        If `duration_hours` is given, the loop stops itself automatically
+        after that much total time has passed (e.g.
+        start_periodic_scan(5, duration_hours=8) scans every 5 minutes for
+        8 hours, then stops on its own — no need to call
+        stop_periodic_scan() yourself). Leave it as None (the default) to
+        scan indefinitely until stop_periodic_scan() is called explicitly.
+        """
         if self._scan_thread and self._scan_thread.is_alive():
             logger.warning("Periodic scan already running; call stop_periodic_scan() first.")
             return
 
         self._interval_seconds = max(1, int(interval_minutes * 60))
+        self._scan_deadline = time.monotonic() + duration_hours * 3600 if duration_hours is not None else None
         self._stop_event.clear()
         self._scan_thread = threading.Thread(target=self._scan_loop, daemon=True, name="NetWatch-ScanLoop")
         self._scan_thread.start()
-        logger.info("Periodic scan started (every %s minutes)", interval_minutes)
+        logger.info(
+            "Periodic scan started (every %s minutes%s)",
+            interval_minutes,
+            f", stopping automatically after {duration_hours}h" if duration_hours is not None else "",
+        )
 
     def stop_periodic_scan(self, wait_timeout: float = 5.0) -> None:
         """
@@ -671,14 +767,14 @@ class BaseScanner(ABC):
 
         logger.info("Periodic scan stopped")
 
-
-
-
-
+    # ------------------------------------------------------------------ #
     # Internals
-    # ------------------------------------------------------------------ 
+    # ------------------------------------------------------------------ #
     def _scan_loop(self) -> None:
         while not self._stop_event.is_set():
+            if self._scan_deadline is not None and time.monotonic() >= self._scan_deadline:
+                logger.info("Periodic scan's configured duration has elapsed — stopping automatically")
+                break
             try:
                 self.scan_now()
             except Exception:
@@ -686,6 +782,7 @@ class BaseScanner(ABC):
                 # thread — log it and try again next interval.
                 logger.exception("Scheduled scan failed")
             self._stop_event.wait(self._interval_seconds)  # wakes instantly on stop_periodic_scan()
+        self._stop_event.set()  # keep state consistent if we broke out via the deadline, not stop_periodic_scan()
 
     def _notify_callbacks(self, devices: list[Device], scan_time: datetime) -> None:
         for cb in self._callbacks:
@@ -695,42 +792,66 @@ class BaseScanner(ABC):
                 logger.exception("A scan callback raised an exception")
 
 
-
-
-
-# WirelessScanner 
 # --------------------------------------------------------------------------- #
-class WirelessScanner(BaseScanner):
+# WirelessScanner — the concrete implementation for this phase
+# --------------------------------------------------------------------------- #
+class _ArpBasedScanner(BaseScanner):
     """
-    Wi-Fi (WLAN) device discovery via ARP.
+    Shared implementation for any ARP-based scanner. WirelessScanner and
+    LANScanner are both thin subclasses of this — scanning over Wi-Fi vs.
+    scanning over a wired uplink differs only in which interface gets
+    auto-detected by default. The actual ARP sweep + vendor/hostname
+    enrichment is identical either way, so it lives here exactly once
+    instead of being duplicated (and risking the two copies drifting
+    apart) in both subclasses.
+
+    Internal base class — instantiate WirelessScanner or LANScanner, not
+    this directly.
+
     Args:
         subnet_cidr: e.g. "192.168.1.0/24". Auto-guessed if None.
-        iface: NIC name to scan on. Auto-detected (best-effort) if None.
+        iface: NIC identifier to scan on. Auto-detected (best-effort, via
+            the subclass's default_iface_guesser) if None.
         timeout: seconds to wait for ARP replies per scan.
+        retry: re-send to hosts that haven't answered yet (catches devices
+            in power-save mode). Does NOT help against AP-level client
+            isolation on some Wi-Fi hotspots — see arp_scan_subnet().
         resolve_hostnames: reverse-DNS lookups add latency; disable for
             faster scans if hostnames aren't needed.
     """
+
+    #: Overridden by each subclass: how to guess a default interface.
+    default_iface_guesser: Callable[[], str | None] = staticmethod(lambda: None)
+    #: Overridden by each subclass: used only in log messages.
+    scan_type_label: str = "Network"
 
     def __init__(
         self,
         subnet_cidr: str | None = None,
         iface: str | None = None,
         timeout: float = 3.0,
+        retry: int = 2,
         resolve_hostnames: bool = True,
     ) -> None:
         super().__init__()
         self.subnet_cidr = subnet_cidr or guess_subnet_cidr()
-        self.iface = iface or guess_wireless_interface()
+        self.iface = iface or self.default_iface_guesser()
         self.timeout = timeout
+        self.retry = retry
         self.resolve_hostnames = resolve_hostnames
 
+        # Vendor DB download is lazy — it starts on the first resolve() call
+        # inside scan(), not here, so constructing a scanner never blocks
+        # on the network (see VendorResolver._start_background_download).
         self._vendor_resolver = VendorResolver()
 
-        logger.info("WirelessScanner ready: subnet=%s iface=%s", self.subnet_cidr, self.iface or "default")
+        logger.info(
+            "%s ready: subnet=%s iface=%s", type(self).__name__, self.subnet_cidr, self.iface or "default"
+        )
 
     def scan(self) -> list[Device]:
-        """One full wireless scan: ARP sweep + vendor/hostname enrichment."""
-        raw_hits = arp_scan_subnet(self.subnet_cidr, iface=self.iface, timeout=self.timeout)
+        """One full scan: ARP sweep + vendor/hostname enrichment."""
+        raw_hits = arp_scan_subnet(self.subnet_cidr, iface=self.iface, timeout=self.timeout, retry=self.retry)
         now_iso = datetime.now().isoformat(timespec="seconds")
 
         # Reverse-DNS is the slow part (up to `timeout`s per host with no
@@ -757,15 +878,60 @@ class WirelessScanner(BaseScanner):
             for ip, mac in raw_hits
         ]
 
-        logger.info("Wireless scan complete: %d device(s) found on %s", len(devices), self.subnet_cidr)
+        logger.info(
+            "%s scan complete: %d device(s) found on %s", self.scan_type_label, len(devices), self.subnet_cidr
+        )
         return devices
 
 
+class WirelessScanner(_ArpBasedScanner):
+    """
+    Wi-Fi (WLAN) device discovery via ARP.
 
+    Broadcasts ARP requests to every host on the subnet and records who
+    replies — devices on the same Wi-Fi network/AP will answer, so this
+    naturally only sees your Wi-Fi LAN, not the wider internet.
+
+    See _ArpBasedScanner above for the constructor args — identical here.
+    """
+
+    scan_type_label = "Wireless"
+
+    @staticmethod
+    def default_iface_guesser() -> str | None:
+        return guess_wireless_interface()
+
+
+class LANScanner(_ArpBasedScanner):
+    """
+    Wired (Ethernet) device discovery via ARP.
+
+    Exactly the same ARP-scanning mechanism as WirelessScanner — the only
+    difference is that it auto-detects a wired adapter by default instead
+    of a Wi-Fi one (see guess_wired_interface()), so a laptop with both a
+    Wi-Fi radio and a USB-Ethernet dongle plugged in scans the cable, not
+    the Wi-Fi network, when you use this class.
+
+    Use this for a Location Profile where the machine connects over
+    Ethernet (e.g. a wired office/University LAN) rather than Wi-Fi.
+
+    See _ArpBasedScanner above for the constructor args — identical here.
+    """
+
+    scan_type_label = "Wired"
+
+    @staticmethod
+    def default_iface_guesser() -> str | None:
+        return guess_wired_interface()
+
+
+# --------------------------------------------------------------------------- #
 # Manual test — run this file directly to sanity-check on your own machine.
-# Needs admin/root 
+# Needs admin/root (see SETUP note at the top of the file).
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
+    import sys
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     def _print_scan(devices: list[Device], scan_time: datetime) -> None:
@@ -773,7 +939,12 @@ if __name__ == "__main__":
         for d in devices:
             print(f"{d.ip:<15} {d.mac:<18} {d.vendor:<25} {d.hostname or '-'}")
 
-    scanner = WirelessScanner()  # auto-detects subnet + interface
+    mode = sys.argv[1] if len(sys.argv) > 1 else "wireless"
+    if mode not in ("wireless", "wired"):
+        print(f"Usage: python3 {sys.argv[0]} [wireless|wired]")
+        raise SystemExit(1)
+
+    scanner = WirelessScanner() if mode == "wireless" else LANScanner()  # auto-detects subnet + interface
     scanner.register_callback(_print_scan)  # Module 2 would register storage.save_scan here instead
 
     try:
