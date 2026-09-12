@@ -20,7 +20,7 @@ _normalize_device() below.
 ----------------------------------------------------------------------
 HOW THIS CONNECTS TO MODULE 1 (core/wireless_scanner.py)
 ----------------------------------------------------------------------
-    from storage import Storage
+    from database.storage import Storage
     from core.wireless_scanner import WirelessScanner
 
     storage = Storage("netwatch.db")               # creates/opens the DB, applies schema.sql
