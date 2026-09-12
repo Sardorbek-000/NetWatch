@@ -10,7 +10,7 @@ schema (see schema.sql, applied automatically below) already supports
 filtering by date range, IP/MAC/vendor/status/hostname, and comparing
 any two scans, so most new features are just a new query method here.
 
-Deliberately has ZERO dependency on wireless_scanner.py / scapy /
+Deliberately has ZERO dependency on core/wireless_scanner.py / scapy /
 mac-vendor-lookup — Module 2 shouldn't need Module 1's networking stack
 installed just to run its own tests or be imported by the Frontend. It
 accepts anything with the same shape as Module 1's `Device` (an object
@@ -18,10 +18,10 @@ with a `.to_dict()` method, OR a plain dict with the same keys) — see
 _normalize_device() below.
 
 ----------------------------------------------------------------------
-HOW THIS CONNECTS TO MODULE 1 (wireless_scanner.py)
+HOW THIS CONNECTS TO MODULE 1 (core/wireless_scanner.py)
 ----------------------------------------------------------------------
     from storage import Storage
-    from wireless_scanner import WirelessScanner
+    from core.wireless_scanner import WirelessScanner
 
     storage = Storage("netwatch.db")               # creates/opens the DB, applies schema.sql
     profile_id = storage.get_or_create_profile("Home")
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_scan_devices_mac     ON scan_devices(mac);
 def _normalize_device(device: Any) -> dict:
     """
     Accepts either a Module-1-style object with `.to_dict()` (the `Device`
-    dataclass from wireless_scanner.py) or a plain dict with the same
+    dataclass from core/wireless_scanner.py) or a plain dict with the same
     keys (ip, mac, vendor, hostname, status, last_seen) — so this module
     never has to import scapy/mac-vendor-lookup just to know Device's shape.
     """
