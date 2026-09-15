@@ -226,6 +226,7 @@ class PortScan(ctk.CTkFrame):
 
     def _scan_finished(self):
         count = len(self.results.winfo_children())
+        notify("Port scanning", "Port scanning has finished")
         self.status.configure(text=f"Scan complete - {count} open port(s)")
         self.progress.set(1)
         self.scan_btn.configure(state="normal")
