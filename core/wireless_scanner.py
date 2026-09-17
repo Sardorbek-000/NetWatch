@@ -674,6 +674,11 @@ class BaseScanner(ABC):
     # ------------------------------------------------------------------ #
     # Public API — this is what Module 2 (storage) / Module 3 (UI) use
     # ------------------------------------------------------------------ #
+    @property
+    def is_running(self) -> bool:
+        """Whether a periodic scan loop is currently active — e.g. to disable a "Start" button while scanning."""
+        return self._scan_thread is not None and self._scan_thread.is_alive()
+
     def register_callback(self, callback: Callable[[list[Device], datetime], None]) -> None:
         """
         Subscribe to be notified every time a scan finishes (scheduled OR on-demand).
