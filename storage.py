@@ -104,6 +104,19 @@ CREATE TABLE IF NOT EXISTS scan_devices (
     last_seen TEXT NOT NULL   -- ISO-8601
 );
 
+-- Per-profile custom names for devices, keyed by MAC. The MAC address
+-- itself is always still shown in the UI too -- this is a supplementary
+-- label, not a replacement, and it's scoped to one profile: the same
+-- physical device can have a different name (or none) in a different
+-- Location Profile.
+CREATE TABLE IF NOT EXISTS device_labels (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    mac         TEXT NOT NULL,
+    custom_name TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,  -- ISO-8601
+    PRIMARY KEY (profile_id, mac)
+);
+
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
 --   Hostname", "comparison of scans".
@@ -200,9 +213,65 @@ class Storage:
         return [dict(row) for row in rows]
 
     def delete_profile(self, profile_id: int) -> None:
-        """Deletes a profile and — via ON DELETE CASCADE — all of its scans and scan_devices with it."""
+        """Deletes a profile and — via ON DELETE CASCADE — all of its scans, scan_devices, and device_labels with it."""
         with self._connect() as conn:
             conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+
+    # ------------------------------------------------------------------ #
+    # Device naming — custom names for a MAC, scoped to ONE profile.
+    # The MAC address itself is never hidden by this; the UI should show
+    # both (e.g. "AA:BB:CC:DD:EE:FF — My Laptop"), same MAC can have a
+    # different name (or none) in a different Location Profile.
+    # ------------------------------------------------------------------ #
+    def set_device_name(self, profile_id: int, mac: str, name: str) -> None:
+        """Assigns/overwrites a custom name for `mac`, scoped to this profile only."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO device_labels (profile_id, mac, custom_name, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(profile_id, mac) DO UPDATE SET custom_name = excluded.custom_name, "
+                "updated_at = excluded.updated_at",
+                (profile_id, mac, name, _iso(datetime.now())),
+            )
+
+    def clear_device_name(self, profile_id: int, mac: str) -> None:
+        """Removes a custom name, if any — the device goes back to showing just its MAC/vendor/hostname."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM device_labels WHERE profile_id = ? AND mac = ?", (profile_id, mac))
+
+    def list_device_names(self, profile_id: int) -> dict[str, str]:
+        """All custom names set in this profile, as {mac: name} — e.g. for populating a 'Manage Devices' screen."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT mac, custom_name FROM device_labels WHERE profile_id = ?", (profile_id,)
+            ).fetchall()
+        return {row["mac"]: row["custom_name"] for row in rows}
+
+    def get_all_known_devices(self, profile_id: int) -> list[dict]:
+        """
+        One row per unique MAC ever seen in this profile, with its most
+        recently observed ip/vendor/hostname plus any custom name — for a
+        "Manage Devices" screen where you rename devices independent of
+        any one specific scan. Uses a window function (not MIN/MAX bare-
+        column tricks) so which row's ip/vendor/hostname get used is
+        unambiguous.
+        """
+        query = """
+            WITH latest AS (
+                SELECT sd.mac, sd.ip, sd.vendor, sd.hostname, sd.last_seen,
+                       ROW_NUMBER() OVER (PARTITION BY sd.mac ORDER BY sd.last_seen DESC) AS rn
+                FROM scan_devices sd
+                JOIN scans s ON s.id = sd.scan_id
+                WHERE s.profile_id = ?
+            )
+            SELECT l.mac, l.ip, l.vendor, l.hostname, l.last_seen, dl.custom_name
+            FROM latest l
+            LEFT JOIN device_labels dl ON dl.profile_id = ? AND dl.mac = l.mac
+            WHERE l.rn = 1
+            ORDER BY l.last_seen DESC
+        """
+        with self._connect() as conn:
+            rows = conn.execute(query, (profile_id, profile_id)).fetchall()
+        return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ #
     # Saving scans — this is what Module 1's register_callback() calls
@@ -259,12 +328,58 @@ class Storage:
         return [dict(row) for row in rows]
 
     def get_devices_for_scan(self, scan_id: int) -> list[dict]:
-        """Full device list for one specific past scan. For "View scan"."""
+        """
+        Full device list for one specific past scan, enriched with any
+        custom_name set for that MAC in this scan's profile (NULL if
+        none). For "View scan". Since compare_scans() below calls this
+        method too, its results automatically include custom names as well.
+        """
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT ip, mac, vendor, hostname, status, last_seen "
-                "FROM scan_devices WHERE scan_id = ? ORDER BY ip",
+                """
+                SELECT sd.ip, sd.mac, sd.vendor, sd.hostname, sd.status, sd.last_seen, dl.custom_name
+                FROM scan_devices sd
+                JOIN scans s ON s.id = sd.scan_id
+                LEFT JOIN device_labels dl ON dl.profile_id = s.profile_id AND dl.mac = sd.mac
+                WHERE sd.scan_id = ?
+                ORDER BY sd.ip
+                """,
                 (scan_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_new_devices_for_scan(self, scan_id: int) -> list[dict]:
+        """
+        Devices in this scan whose MAC has NEVER appeared in any EARLIER
+        scan for the same profile — genuinely new to this network, not
+        just "wasn't in the previous scan" (a device that disconnects and
+        reconnects later is NOT new by this definition). This is the
+        "new device found" feature: call this right after save_scan() to
+        get an alert-worthy list.
+
+        Raises ValueError if scan_id doesn't exist.
+        """
+        with self._connect() as conn:
+            scan_row = conn.execute("SELECT profile_id, scan_time FROM scans WHERE id = ?", (scan_id,)).fetchone()
+            if scan_row is None:
+                raise ValueError(f"No scan with id {scan_id}")
+            profile_id, scan_time = scan_row["profile_id"], scan_row["scan_time"]
+
+            rows = conn.execute(
+                """
+                SELECT sd.ip, sd.mac, sd.vendor, sd.hostname, sd.status, sd.last_seen, dl.custom_name
+                FROM scan_devices sd
+                JOIN scans s ON s.id = sd.scan_id
+                LEFT JOIN device_labels dl ON dl.profile_id = s.profile_id AND dl.mac = sd.mac
+                WHERE sd.scan_id = ?
+                  AND sd.mac NOT IN (
+                      SELECT sd2.mac FROM scan_devices sd2
+                      JOIN scans s2 ON s2.id = sd2.scan_id
+                      WHERE s2.profile_id = ? AND s2.scan_time < ?
+                  )
+                ORDER BY sd.ip
+                """,
+                (scan_id, profile_id, scan_time),
             ).fetchall()
         return [dict(row) for row in rows]
 
