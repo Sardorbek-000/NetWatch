@@ -6,10 +6,10 @@ Storage class the app itself uses (so this always reflects the real
 schema, no separate SQL to maintain).
 
 Usage:
-    python3 explore_db.py                     # overview: all profiles + recent scans
-    python3 explore_db.py --profile Home      # full scan history for one profile
-    python3 explore_db.py --scan 3            # full device list for scan #3
-    python3 explore_db.py --db other.db ...   # point at a different database file
+    python3 database/explore_db.py                     # overview: all profiles + recent scans
+    python3 database/explore_db.py --profile Home      # full scan history for one profile
+    python3 database/explore_db.py --scan 3            # full device list for scan #3
+    python3 database/explore_db.py --db other.db ...   # point at a different database file
 """
 
 import argparse

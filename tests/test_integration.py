@@ -7,17 +7,17 @@ Storage, then reads it straight back OUT of the database (not from memory)
 to prove the whole pipeline actually round-trips correctly.
 
 Usage:
-    sudo python3 test_integration.py wireless   # scan over Wi-Fi (default)
-    sudo python3 test_integration.py wired      # scan over Ethernet
+    sudo python3 tests/test_integration.py wireless   # scan over Wi-Fi (default)
+    sudo python3 tests/test_integration.py wired      # scan over Ethernet
 
-Needs admin/root for the ARP scan — see wireless_scanner.py's SETUP notes
+Needs admin/root for the ARP scan — see core/wireless_scanner.py's SETUP notes
 in its module docstring if you haven't set that up yet.
 """
 
 import sys
 
-from storage import Storage
-from wireless_scanner import InsufficientPrivilegesError, LANScanner, WirelessScanner
+from database.storage import Storage
+from core.wireless_scanner import InsufficientPrivilegesError, LANScanner, WirelessScanner
 
 
 def main() -> None:
