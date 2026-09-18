@@ -49,6 +49,19 @@ CREATE TABLE IF NOT EXISTS scan_devices (
     last_seen TEXT NOT NULL   -- ISO-8601
 );
 
+-- Per-profile custom names for devices, keyed by MAC. The MAC address
+-- itself is always still shown in the UI too -- this is a supplementary
+-- label, not a replacement, and it's scoped to one profile: the same
+-- physical device can have a different name (or none) in a different
+-- Location Profile.
+CREATE TABLE IF NOT EXISTS device_labels (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    mac         TEXT NOT NULL,
+    custom_name TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,  -- ISO-8601
+    PRIMARY KEY (profile_id, mac)
+);
+
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
 --   Hostname", "comparison of scans".
