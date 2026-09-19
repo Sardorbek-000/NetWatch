@@ -43,7 +43,7 @@ import threading
 import customtkinter as ctk
 from core.ParsePorts import PortScanner
 from UI.notifier import notify
-
+from UI.pages.main_menu_page import MainMenuPage
 from database.storage import Storage
 
 
@@ -65,7 +65,7 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenu, Settings, AddProfile, PortScan]
+        PAGES = [MainMenuPage, Settings, AddProfile, PortScan]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -76,7 +76,7 @@ class NetWatchApp(ctk.CTk):
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.show_frame("MainMenu")
+        self.show_frame("MainMenuPage")
 
     def show_frame(self, name, **kwargs):
         frame = self.frames[name]
@@ -91,42 +91,6 @@ class NetWatchApp(ctk.CTk):
             if on_close is not None:
                 on_close()
         self.destroy()
-
-class MainMenu(ctk.CTkFrame):
-    """Landing screen: lists every saved profile as a button, plus the Scan Ports / Add Profile / Settings entry points."""
-
-    def __init__(self, parent, app):
-        super().__init__(parent, fg_color="transparent")
-        self.app = app
-
-    def refresh_main_menu(self):
-        # Full teardown + rebuild rather than diffing old vs new buttons —
-        # simplest correct option for a handful of profile buttons; would
-        # need revisiting if a profile list ever grew into the hundreds.
-        for widget in self.winfo_children():
-            widget.destroy()
-        ctk.CTkLabel(self, text="NetWatch", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=(40, 30))
-
-        self.app.refresh_profiles()   # this is the one place that keeps self.app.profiles in sync with the DB
-        for profile in self.app.profiles:
-            # p=profile (not a bare `profile` reference) freezes THIS
-            # iteration's value into the lambda's default arg at creation
-            # time. Without it every button's lambda would share the same
-            # loop variable and all open the LAST profile in the list once
-            # the loop finished and got clicked.
-            ctk.CTkButton(self, text=profile["name"], width=220,
-                      command=lambda p=profile: self.app.open_profile(p)).pack(pady=10)
-        ctk.CTkButton(self, text="Scan Ports", width=220,
-                      command=lambda: app.show_frame(PortScan)).pack(pady=10)
-        ctk.CTkButton(self, text="Add Profile", width=220,
-                      command=lambda: app.show_frame(AddProfile)).pack(pady=10)
-        ctk.CTkButton(self, text="Settings", width=220,
-                      command=lambda: app.show_frame(Settings)).pack(pady=10)
-
-
-    def tkraise(self, *args):
-        super().tkraise(*args)
-        self.refresh_main_menu()
 
 
 
