@@ -1,3 +1,41 @@
+"""
+NetWatch — Frontend (Module 3)
+================================================================
+The CustomTkinter desktop app: every screen (Main Menu, Add Profile,
+Settings, Profile, Port Scan) plus the NetWatchApp shell that switches
+between them. Talks to the database only through database/storage.py's
+Storage class — no SQL lives in this file.
+
+----------------------------------------------------------------------
+HOW TO RUN
+----------------------------------------------------------------------
+    From the repo root (NOT from inside UI/), with the venv active:
+
+        python -m UI.app
+
+    Running `python UI/app.py` directly instead can break the
+    `from core...` / `from database...` imports below, since Python
+    then treats UI/ itself as the top-level folder instead of the repo
+    root. netwatch.db is created next to wherever the process's working
+    directory is — run from the repo root so every screen/dev opens the
+    same database file.
+
+----------------------------------------------------------------------
+HOW THE SCREENS FIT TOGETHER
+----------------------------------------------------------------------
+NetWatchApp creates ALL of MainMenu/Settings/AddProfile/PortScan once,
+stacks them on top of each other with .place(), and show_frame() just
+raises the one that should be on top (self.frames[frame_class].tkraise()).
+Profile is the odd one out: a new instance is built every time you enter
+a profile (open_profile()) because, unlike the others, it needs data
+(profile id/name) at construction time.
+
+Any screen that shows data pulled from the database (profile lists,
+scan results) refreshes it in an overridden tkraise() — CustomTkinter
+doesn't have a built-in "screen became visible" event, so overriding
+tkraise() is this codebase's way of hooking that moment.
+"""
+
 import queue
 import socket
 import threading
@@ -14,6 +52,8 @@ ctk.set_default_color_theme("blue")
 
 
 class NetWatchApp(ctk.CTk):
+    """The app shell/window. Owns the one shared Storage instance and the in-memory profile cache every screen reads."""
+
     def __init__(self):
         super().__init__()
 
@@ -21,10 +61,11 @@ class NetWatchApp(ctk.CTk):
         self.geometry("900x600")
         self.minsize(640, 420)
 
-
         self.storage = Storage("netwatch.db")
+        # Cached copy of the profiles table, so screens don't hit the DB on
+        # every redraw. Only ever trusted right after refresh_profiles() —
+        # see the note on that method below.
         self.profiles = self.storage.list_profiles()
-
 
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
@@ -43,27 +84,44 @@ class NetWatchApp(ctk.CTk):
         self.frames[frame_class].tkraise()
 
     def open_profile(self, profile):
+        """profile is a dict ({"id", "name", "created_at"}) from Storage.list_profiles(), not a bare name."""
         if self.profile_frame is not None:
             self.profile_frame.destroy()
         self.profile_frame = Profile(self.container, self, profile)
         self.profile_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.profile_frame.tkraise()
+
     def refresh_profiles(self):
+        """
+        Re-reads self.profiles from the database. Writing a profile via
+        Storage (create/delete) does NOT automatically update this cached
+        list — call this right after any such write, or the UI will keep
+        showing stale data until something else happens to call it.
+        """
         self.profiles = self.storage.list_profiles()
 
 class MainMenu(ctk.CTkFrame):
+    """Landing screen: lists every saved profile as a button, plus the Scan Ports / Add Profile / Settings entry points."""
+
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
+
     def refresh_main_menu(self):
+        # Full teardown + rebuild rather than diffing old vs new buttons —
+        # simplest correct option for a handful of profile buttons; would
+        # need revisiting if a profile list ever grew into the hundreds.
         for widget in self.winfo_children():
             widget.destroy()
         ctk.CTkLabel(self, text="NetWatch", font=ctk.CTkFont(size=28, weight="bold")).pack(pady=(40, 30))
 
-        # ctk.CTkButton(self, text="Enter Profile", width=220,
-        #               command=lambda: app.show_frame(Profile)).pack(pady=10)
-        self.app.refresh_profiles()
+        self.app.refresh_profiles()   # this is the one place that keeps self.app.profiles in sync with the DB
         for profile in self.app.profiles:
+            # p=profile (not a bare `profile` reference) freezes THIS
+            # iteration's value into the lambda's default arg at creation
+            # time. Without it every button's lambda would share the same
+            # loop variable and all open the LAST profile in the list once
+            # the loop finished and got clicked.
             ctk.CTkButton(self, text=profile["name"], width=220,
                       command=lambda p=profile: self.app.open_profile(p)).pack(pady=10)
         ctk.CTkButton(self, text="Scan Ports", width=220,
@@ -81,11 +139,13 @@ class MainMenu(ctk.CTkFrame):
 
 
 class Settings(ctk.CTkFrame):
+    """Multi-select delete screen for profiles. Selection state (self.selected/self.profile_buttons) is keyed by profile id, not name — names aren't guaranteed unique-forever the way an id is."""
+
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
-        self.selected = set()
-        self.profile_buttons = {}
+        self.selected = set()          # profile ids currently checked for deletion
+        self.profile_buttons = {}      # profile id -> its CTkButton, so toggle_profile can recolor it
 
         ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 20))
 
@@ -100,6 +160,7 @@ class Settings(ctk.CTkFrame):
                       command=lambda: app.show_frame(MainMenu)).pack(pady=10)
 
     def refresh_profiles(self):
+        """Rebuilds the checklist from self.app.profiles. Does NOT itself re-query the DB — call self.app.refresh_profiles() first if the cache might be stale (see delete_selected())."""
         for widget in self.profile_list.winfo_children():
             widget.destroy()
         self.selected.clear()
@@ -124,21 +185,31 @@ class Settings(ctk.CTkFrame):
 
     def delete_selected(self):
         for profile_id in self.selected:
-            self.app.storage.delete_profile(profile_id)
-        self.app.refresh_profiles()
-        self.refresh_profiles()
+            self.app.storage.delete_profile(profile_id)   # cascades to that profile's scans/scan_devices/device_labels too
+        self.app.refresh_profiles()   # sync the shared NetWatchApp.profiles cache with the DB first...
+        self.refresh_profiles()       # ...THEN redraw this screen's buttons from it, or you'd redraw the stale list
 
     def tkraise(self, *args):
         super().tkraise(*args)
         self.refresh_profiles()
 
 class PortScan(ctk.CTkFrame):
+    """
+    Scans one IP's ports. This is the reference pattern (also used by
+    Profile's scanning) for running slow/blocking work without freezing
+    the UI: the scan itself runs on a daemon background thread; that
+    thread never touches ctk widgets directly (Tkinter isn't thread-safe)
+    — it only pushes plain tuples onto self.events. self.after(100, ...)
+    polls that queue back on the MAIN thread, which is the only thread
+    allowed to update widgets.
+    """
+
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
 
-        self.scanner = None
-        self.events = queue.Queue()
+        self.scanner = None          # built lazily in start_scan(), None means "no scan in progress"
+        self.events = queue.Queue()  # cross-thread handoff: background thread produces, _drain_events() consumes
 
         ctk.CTkLabel(self, text="Scan for open Ports", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 20))
 
@@ -191,12 +262,15 @@ class PortScan(ctk.CTkFrame):
         self.scanner = PortScanner(
             host,
             ports=ports,
+            # These three callbacks all run on the background thread started
+            # below — that's why they only ever call self.events.put(...)
+            # and never touch a ctk widget directly.
             on_result=lambda p: self.events.put(("port", p)),
             on_progress=lambda done, total: self.events.put(("progress", done / total)),
             on_done=lambda: self.events.put(("done", None)),
         )
         threading.Thread(target=self.scanner.run, daemon=True).start()
-        self.after(100, self._drain_events)
+        self.after(100, self._drain_events)  # start polling self.events on the main/UI thread
 
     def stop_scan(self):
         if self.scanner is not None:
@@ -205,6 +279,14 @@ class PortScan(ctk.CTkFrame):
             self.stop_btn.configure(state="disabled")
 
     def _drain_events(self):
+        """
+        Runs on the main/UI thread (scheduled via self.after). Drains
+        whatever's queued up so far, then reschedules itself — this is
+        the polling loop that turns background-thread events into safe
+        widget updates. The 500-item cap per call just bounds how long one
+        call can run if a fast scan floods the queue between polls; it
+        picks back up next tick via the recursive self.after() below.
+        """
         latest_progress = None
         processed = 0
         try:
@@ -214,11 +296,11 @@ class PortScan(ctk.CTkFrame):
                 if kind == "port":
                     self._add_port_row(value)
                 elif kind == "progress":
-                    latest_progress = value
+                    latest_progress = value  # only keep the newest — no point drawing 40 intermediate progress bars
                 elif kind == "done":
                     self.progress.set(1)
                     self._scan_finished()
-                    return
+                    return  # scan over — stop polling, don't reschedule
         except queue.Empty:
             pass
         if latest_progress is not None:
@@ -258,12 +340,31 @@ class AddProfile(ctk.CTkFrame):
     def create_profile(self):
         profile_name = self.title_entry.get()
         if profile_name.strip():
+            # get_or_create_profile is idempotent by name (see storage.py) —
+            # calling it again with a name that already exists just returns
+            # that profile's existing id instead of erroring or duplicating.
             self.app.storage.get_or_create_profile(profile_name)
             self.title_entry.delete(0, "end")
+            # show_frame(MainMenu) triggers MainMenu.tkraise() ->
+            # refresh_main_menu() -> self.app.refresh_profiles(), which is
+            # what actually makes the new profile appear — nothing here
+            # touches self.app.profiles directly.
             self.app.show_frame(MainMenu)
 
 
 class Profile(ctk.CTkFrame):
+    """
+    Hub for one Location Profile (e.g. "Home"). A fresh instance is built
+    every time open_profile() runs, unlike the other screens which are
+    built once — that's how it receives which profile it's showing.
+
+    "Start Scanning" and "History" have no command= yet — scanning needs
+    the same background-thread/queue pattern as PortScan above (network
+    scans are blocking calls too), just wired up to WirelessScanner/
+    LANScanner + Storage.save_scan() instead of PortScanner. Not
+    implemented yet.
+    """
+
     def __init__(self, parent, app, profile):
         super().__init__(parent, fg_color="transparent")
         self.profile_name = profile["name"]
