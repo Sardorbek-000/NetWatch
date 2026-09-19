@@ -42,7 +42,7 @@ import threading
 
 import customtkinter as ctk
 from core.ParsePorts import PortScanner
-from notifier import notify
+from UI.notifier import notify
 
 from database.storage import Storage
 
@@ -62,43 +62,35 @@ class NetWatchApp(ctk.CTk):
         self.minsize(640, 420)
 
         self.storage = Storage("netwatch.db")
-        # Cached copy of the profiles table, so screens don't hit the DB on
-        # every redraw. Only ever trusted right after refresh_profiles() —
-        # see the note on that method below.
-        self.profiles = self.storage.list_profiles()
+        self.current_profile_id = None
+        self.current_profile_name = None
 
+        PAGES = [MainMenu, Settings, AddProfile, PortScan]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.frames = {}
-        for Frame in (MainMenu, Settings, AddProfile, PortScan):
+        for Frame in PAGES:
             frame = Frame(self.container, self)
-            self.frames[Frame] = frame
+            self.frames[Frame.__name__] = frame
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        self.profile_frame = None
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.show_frame("MainMenu")
 
-        self.show_frame(MainMenu)
+    def show_frame(self, name, **kwargs):
+        frame = self.frames[name]
+        on_show = getattr(frame, "on_show", None)
+        if on_show is not None:
+            on_show(**kwargs)
+        frame.tkraise()
 
-    def show_frame(self, frame_class):
-        self.frames[frame_class].tkraise()
-
-    def open_profile(self, profile):
-        """profile is a dict ({"id", "name", "created_at"}) from Storage.list_profiles(), not a bare name."""
-        if self.profile_frame is not None:
-            self.profile_frame.destroy()
-        self.profile_frame = Profile(self.container, self, profile)
-        self.profile_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.profile_frame.tkraise()
-
-    def refresh_profiles(self):
-        """
-        Re-reads self.profiles from the database. Writing a profile via
-        Storage (create/delete) does NOT automatically update this cached
-        list — call this right after any such write, or the UI will keep
-        showing stale data until something else happens to call it.
-        """
-        self.profiles = self.storage.list_profiles()
+    def _on_close(self):
+        for frame in self.frames.values():
+            on_close = getattr(frame, "on_close", None)
+            if on_close is not None:
+                on_close()
+        self.destroy()
 
 class MainMenu(ctk.CTkFrame):
     """Landing screen: lists every saved profile as a button, plus the Scan Ports / Add Profile / Settings entry points."""
