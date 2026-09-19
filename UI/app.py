@@ -105,27 +105,27 @@ class Settings(ctk.CTkFrame):
         self.selected.clear()
         self.profile_buttons.clear()
         self.delete_btn.configure(state="disabled")
-
-        for profile_name in self.app.profiles:
-            btn = ctk.CTkButton(self.profile_list, text=profile_name, width=220,
+        for profile in self.app.profiles:
+            btn = ctk.CTkButton(self.profile_list, text=profile["name"], width=220,
                                 fg_color="transparent", border_width=1,
-                                command=lambda p=profile_name: self.toggle_profile(p))
+                                command=lambda p=profile: self.toggle_profile(p["id"]))
             btn.pack(pady=5)
-            self.profile_buttons[profile_name] = btn
+            self.profile_buttons[profile["id"]] = btn
 
-    def toggle_profile(self, profile_name):
-        btn = self.profile_buttons[profile_name]
-        if profile_name in self.selected:
-            self.selected.remove(profile_name)
+    def toggle_profile(self, profile_id):
+        btn = self.profile_buttons[profile_id]
+        if profile_id in self.selected:
+            self.selected.remove(profile_id)
             btn.configure(fg_color="transparent")
         else:
-            self.selected.add(profile_name)
+            self.selected.add(profile_id)
             btn.configure(fg_color="darkred")
         self.delete_btn.configure(state="normal" if self.selected else "disabled")
 
     def delete_selected(self):
-        for profile_name in self.selected:
-            self.app.profiles.remove(profile_name)
+        for profile_id in self.selected:
+            self.app.storage.delete_profile(profile_id)
+        self.app.refresh_profiles()
         self.refresh_profiles()
 
     def tkraise(self, *args):
@@ -235,6 +235,7 @@ class PortScan(ctk.CTkFrame):
 
     def _scan_finished(self):
         count = len(self.results.winfo_children())
+        notify("Port scanning", "Port scanning has finished")
         self.status.configure(text=f"Scan complete - {count} open port(s)")
         self.progress.set(1)
         self.scan_btn.configure(state="normal")
@@ -259,7 +260,6 @@ class AddProfile(ctk.CTkFrame):
         if profile_name.strip():
             self.app.storage.get_or_create_profile(profile_name)
             self.title_entry.delete(0, "end")
-            print(f"Profile added: {profile_name}")
             self.app.show_frame(MainMenu)
 
 
