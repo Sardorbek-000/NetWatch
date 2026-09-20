@@ -51,10 +51,16 @@ HOW MODULE 3 (FRONTEND) READS THIS
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterable, Iterator
+
+# core.validators is pure stdlib (ipaddress + re), so importing it keeps this
+# module free of scapy / mac-vendor-lookup, as the docstring above promises.
+from core.validators import is_valid_ip, is_valid_ip_range, is_valid_mac
 
 # ---------------------------------------------------------------------------
 # Schema is embedded here (not read from schema.sql at runtime) so this
@@ -143,6 +149,22 @@ def _normalize_device(device: Any) -> dict:
 def _iso(value: datetime | None) -> str | None:
     """Consistent ISO-8601 formatting for anything we store/compare as a timestamp."""
     return value.isoformat(timespec="seconds") if value is not None else None
+
+
+# ETHAN — helpers for Storage.get_devices_with_filters()
+def _ip_sort_key(ip: str) -> tuple[int, int]:
+    """Numeric sort key so 192.168.1.2 sorts before 192.168.1.10 (plain string ORDER BY gets this wrong)."""
+    try:
+        return (0, int(ipaddress.IPv4Address(ip)))
+    except ValueError:
+        return (1, 0)  # malformed values sort last instead of crashing the whole query
+
+
+def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
+    try:
+        return ipaddress.IPv4Address(ip) in network
+    except ValueError:
+        return False
 
 
 class Storage:
@@ -382,6 +404,117 @@ class Storage:
                 (scan_id, profile_id, scan_time),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # ETHAN — Filtered retrieval
+    # One method for every "filter the device list" need
+    # ------------------------------------------------------------------ #
+    def get_devices_with_filters(
+        self,
+        profile_id: int,
+        *,
+        scan_id: int | None = None,
+        status: str | None = None,
+        ip: str | None = None,
+        ip_range: str | None = None,
+        vendor: str | None = None,
+        mac: str | None = None,
+        hostname: str | None = None,
+        hostname_regex: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        sort_by_ip: bool = False,
+    ) -> list[dict]:
+        """
+        Device sightings for one profile, narrowed by any combination of
+        filters (every filter is optional and they combine with AND).
+        Each row is one device in one scan, so the same MAC appears once
+        per scan it was seen in; scan_id and scan_time are included so the
+        caller can tell them apart. custom_name is filled in when set.
+
+        scan_id         only this scan (must belong to `profile_id`)
+        status          exact match, e.g. "online"
+        ip              exact IPv4 address
+        ip_range        CIDR such as "192.168.1.0/24"; keeps devices whose IP
+                        falls inside it (host bits are ignored, as in
+                        is_valid_ip_range's default)
+        vendor          exact match, case-insensitive
+        mac             case- and separator-insensitive ("aa-bb-..." matches
+                        "AA:BB:...")
+        hostname        exact match, case-insensitive
+        hostname_regex  regex searched in the hostname, case-insensitive
+        start / end     inclusive bounds on scan time, like get_scan_history
+        sort_by_ip      numeric IP order; default is oldest scan first
+
+        Raises ValueError for a malformed ip, ip_range, mac or regex,
+        rather than quietly returning [] and hiding the bug in the caller.
+        """
+        if ip is not None and not is_valid_ip(ip):
+            raise ValueError(f"Invalid IP address: {ip!r}")
+        if mac is not None and not is_valid_mac(mac):
+            raise ValueError(f"Invalid MAC address: {mac!r}")
+
+        network = None
+        if ip_range is not None:
+            if not is_valid_ip_range(ip_range):
+                raise ValueError(f"Invalid IP range: {ip_range!r}")
+            network = ipaddress.IPv4Network(ip_range, strict=False)
+
+        regex = None
+        if hostname_regex is not None:
+            try:
+                regex = re.compile(hostname_regex, re.IGNORECASE)
+            except re.error as exc:
+                raise ValueError(f"Invalid hostname regex {hostname_regex!r}: {exc}") from exc
+
+        query = """
+            SELECT s.id AS scan_id, s.scan_time,
+                   sd.ip, sd.mac, sd.vendor, sd.hostname, sd.status, sd.last_seen,
+                   dl.custom_name
+            FROM scan_devices sd
+            JOIN scans s ON s.id = sd.scan_id
+            LEFT JOIN device_labels dl ON dl.profile_id = s.profile_id AND dl.mac = sd.mac
+            WHERE s.profile_id = ?
+        """
+        params: list[Any] = [profile_id]
+        if scan_id is not None:
+            query += " AND s.id = ?"
+            params.append(scan_id)
+        if status is not None:
+            query += " AND sd.status = ?"
+            params.append(status)
+        if ip is not None:
+            query += " AND sd.ip = ?"
+            params.append(ip)
+        if vendor is not None:
+            query += " AND sd.vendor = ? COLLATE NOCASE"
+            params.append(vendor)
+        if mac is not None:
+            query += " AND REPLACE(UPPER(sd.mac), '-', ':') = ?"
+            params.append(mac.upper().replace("-", ":"))
+        if hostname is not None:
+            query += " AND sd.hostname = ? COLLATE NOCASE"
+            params.append(hostname)
+        if start is not None:
+            query += " AND s.scan_time >= ?"
+            params.append(_iso(start))
+        if end is not None:
+            query += " AND s.scan_time <= ?"
+            params.append(_iso(end))
+        query += " ORDER BY s.scan_time ASC, sd.id ASC"
+
+        with self._connect() as conn:
+            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+
+        # SQLite has no CIDR or regex operators, so these two run in Python
+        # on the (already profile-scoped) rows.
+        if network is not None:
+            rows = [r for r in rows if _ip_in_network(r["ip"], network)]
+        if regex is not None:
+            rows = [r for r in rows if r["hostname"] and regex.search(r["hostname"])]
+        if sort_by_ip:
+            rows.sort(key=lambda r: _ip_sort_key(r["ip"]))  # stable: ties stay in scan-time order
+        return rows
 
     # ------------------------------------------------------------------ #
     # Analytics — starter set; add more methods here as you build features
