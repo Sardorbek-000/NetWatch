@@ -45,6 +45,7 @@ from core.ParsePorts import PortScanner
 from UI.notifier import notify
 from UI.pages.add_profile_page import AddProfilePage
 from UI.pages.main_menu_page import MainMenuPage
+from UI.pages.settings_page import SettingsPage
 from database.storage import Storage
 
 
@@ -66,12 +67,12 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenuPage, Settings, AddProfilePage, PortScan]
+        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.frames = {}
-        for Frame in PAGES:    
+        for Frame in PAGES:
             frame = Frame(self.container, self)
             self.frames[Frame.__name__] = frame
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -95,60 +96,6 @@ class NetWatchApp(ctk.CTk):
 
 
 
-class Settings(ctk.CTkFrame):
-    """Multi-select delete screen for profiles. Selection state (self.selected/self.profile_buttons) is keyed by profile id, not name — names aren't guaranteed unique-forever the way an id is."""
-
-    def __init__(self, parent, app):
-        super().__init__(parent, fg_color="transparent")
-        self.app = app
-        self.selected = set()          # profile ids currently checked for deletion
-        self.profile_buttons = {}      # profile id -> its CTkButton, so toggle_profile can recolor it
-
-        ctk.CTkLabel(self, text="Settings", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 20))
-
-        self.profile_list = ctk.CTkScrollableFrame(self, width=260, height=220, label_text="Profiles")
-        self.profile_list.pack(pady=10)
-
-        self.delete_btn = ctk.CTkButton(self, text="Delete Selected", width=220, fg_color="darkred",
-                                        hover_color="#8b0000", state="disabled",
-                                        command=self.delete_selected)
-        self.delete_btn.pack(pady=10)
-        ctk.CTkButton(self, text="Go Back to Menu", width=220,
-                      command=lambda: app.show_frame(MainMenu)).pack(pady=10)
-
-    def refresh_profiles(self):
-        """Rebuilds the checklist from self.app.profiles. Does NOT itself re-query the DB — call self.app.refresh_profiles() first if the cache might be stale (see delete_selected())."""
-        for widget in self.profile_list.winfo_children():
-            widget.destroy()
-        self.selected.clear()
-        self.profile_buttons.clear()
-        self.delete_btn.configure(state="disabled")
-        for profile in self.app.profiles:
-            btn = ctk.CTkButton(self.profile_list, text=profile["name"], width=220,
-                                fg_color="transparent", border_width=1,
-                                command=lambda p=profile: self.toggle_profile(p["id"]))
-            btn.pack(pady=5)
-            self.profile_buttons[profile["id"]] = btn
-
-    def toggle_profile(self, profile_id):
-        btn = self.profile_buttons[profile_id]
-        if profile_id in self.selected:
-            self.selected.remove(profile_id)
-            btn.configure(fg_color="transparent")
-        else:
-            self.selected.add(profile_id)
-            btn.configure(fg_color="darkred")
-        self.delete_btn.configure(state="normal" if self.selected else "disabled")
-
-    def delete_selected(self):
-        for profile_id in self.selected:
-            self.app.storage.delete_profile(profile_id)   # cascades to that profile's scans/scan_devices/device_labels too
-        self.app.refresh_profiles()   # sync the shared NetWatchApp.profiles cache with the DB first...
-        self.refresh_profiles()       # ...THEN redraw this screen's buttons from it, or you'd redraw the stale list
-
-    def tkraise(self, *args):
-        super().tkraise(*args)
-        self.refresh_profiles()
 
 class PortScan(ctk.CTkFrame):
     """
