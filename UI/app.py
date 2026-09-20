@@ -43,6 +43,7 @@ import threading
 import customtkinter as ctk
 from core.ParsePorts import PortScanner
 from UI.notifier import notify
+from UI.pages.add_profile_page import AddProfilePage
 from UI.pages.main_menu_page import MainMenuPage
 from database.storage import Storage
 
@@ -65,12 +66,12 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenuPage, Settings, AddProfile, PortScan]
+        PAGES = [MainMenuPage, Settings, AddProfilePage, PortScan]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self.frames = {}
-        for Frame in PAGES:
+        for Frame in PAGES:    
             frame = Frame(self.container, self)
             self.frames[Frame.__name__] = frame
             frame.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -279,34 +280,6 @@ class PortScan(ctk.CTkFrame):
         self.scan_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.scanner = None
-
-class AddProfile(ctk.CTkFrame):
-    def __init__(self, parent, app):
-        super().__init__(parent, fg_color="transparent")
-        self.app = app
-        ctk.CTkLabel(self, text="Add Profile", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
-
-        self.title_entry = ctk.CTkEntry(self, width=260, placeholder_text="Profile title")
-        self.title_entry.pack(pady=10)
-
-        ctk.CTkButton(self, text="Create", width=220, command=lambda : self.create_profile()).pack(pady=10)
-        ctk.CTkButton(self, text="Go Back to Menu", width=220,
-                      command=lambda: app.show_frame(MainMenu)).pack(pady=10)
-
-    def create_profile(self):
-        profile_name = self.title_entry.get()
-        if profile_name.strip():
-            # get_or_create_profile is idempotent by name (see storage.py) —
-            # calling it again with a name that already exists just returns
-            # that profile's existing id instead of erroring or duplicating.
-            self.app.storage.get_or_create_profile(profile_name)
-            self.title_entry.delete(0, "end")
-            # show_frame(MainMenu) triggers MainMenu.tkraise() ->
-            # refresh_main_menu() -> self.app.refresh_profiles(), which is
-            # what actually makes the new profile appear — nothing here
-            # touches self.app.profiles directly.
-            self.app.show_frame(MainMenu)
-
 
 class Profile(ctk.CTkFrame):
     """

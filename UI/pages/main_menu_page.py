@@ -20,7 +20,7 @@ class MainMenuPage(ctk.CTkFrame):
         ctk.CTkButton(self, text="Scan Ports", width=220,
                       command=lambda: self.app.show_frame("PortScan")).pack(pady=10)
         ctk.CTkButton(self, text="Add Profile", width=220,
-                      command=lambda: self.app.show_frame("AddProfile")).pack(pady=10)
+                      command=lambda: self.app.show_frame("AddProfilePage")).pack(pady=10)
         ctk.CTkButton(self, text="Settings", width=220,
                       command=lambda: self.app.show_frame("Settings")).pack(pady=10)
 
