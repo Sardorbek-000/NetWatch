@@ -1,4 +1,4 @@
-"""Input validators shared across NetWatch.
+"""our input validators working across netwatch
 
 Every function returns True/False and never raises, so callers can use them
 directly: `if not is_valid_ip(value): ...`
@@ -15,9 +15,6 @@ _MAC_RE = re.compile(r"[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}
 
 def is_valid_ip(value):
     """True if `value` is a dotted-quad IPv4 address string, e.g. '192.168.1.10'.
-
-    Rejects non-strings, surrounding whitespace, out-of-range octets, and
-    leading zeros like '192.168.01.1'.
     """
     if not isinstance(value, str):
         return False
