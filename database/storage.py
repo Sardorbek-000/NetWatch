@@ -674,7 +674,7 @@ class Storage:
     # that answered, so it was always 0. If the scanner ever records offline
     # status, add it back here, in the health_scores table and in
     # _compute_health_score().
-    
+
     HEALTH_PENALTY_WEIGHTS = {
         "new": 100 / 3,
         "missing": 100 / 3,
@@ -703,6 +703,39 @@ class Storage:
             (scan_id,),
         ).fetchone()
         return row["id"] if row else None
+
+    def _compute_health_score(self, conn: sqlite3.Connection, scan_id: int) -> dict:
+        """Score (0-100) plus the counts behind it, for one scan. Doesn't save anything."""
+        current = conn.execute("SELECT mac, vendor FROM scan_devices WHERE scan_id = ?", (scan_id,)).fetchall()
+        current_macs = {row["mac"] for row in current}
+
+        previous_id = self._get_previous_scan_id(conn, scan_id)
+        if previous_id is None:
+            # First scan: there is nothing to compare with, so nothing counts as new or missing.
+            new_devices = missing_devices = 0
+        else:
+            previous_macs = {
+                row["mac"]
+                for row in conn.execute("SELECT mac FROM scan_devices WHERE scan_id = ?", (previous_id,))
+            }
+            new_devices = len(current_macs - previous_macs)
+            missing_devices = len(previous_macs - current_macs)
+
+        unknown_vendors = sum(1 for row in current if not row["vendor"])
+
+        total = len(current) or 1  # avoid dividing by zero on an empty scan
+        weights = self.HEALTH_PENALTY_WEIGHTS
+        penalty = (
+            (new_devices / total) * weights["new"]
+            + (missing_devices / total) * weights["missing"]
+            + (unknown_vendors / total) * weights["unknown_vendor"]
+        )
+        return {
+            "score": round(max(0.0, min(100.0, 100 - penalty)), 2),
+            "new_devices": new_devices,
+            "missing_devices": missing_devices,
+            "unknown_vendors": unknown_vendors,
+        }
 
     
 
