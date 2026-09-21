@@ -51,16 +51,10 @@ HOW MODULE 3 (FRONTEND) READS THIS
 
 from __future__ import annotations
 
-import ipaddress
-import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterable, Iterator
-
-# core.validators is pure stdlib (ipaddress + re), so importing it keeps this
-# module free of scapy / mac-vendor-lookup, as the docstring above promises.
-from core.validators import is_valid_ip, is_valid_ip_range, is_valid_mac
 
 # ---------------------------------------------------------------------------
 # Schema is embedded here (not read from schema.sql at runtime) so this
@@ -110,6 +104,7 @@ CREATE TABLE IF NOT EXISTS scan_devices (
     last_seen TEXT NOT NULL   -- ISO-8601
 );
 
+
 -- Per-profile custom names for devices, keyed by MAC. The MAC address
 -- itself is always still shown in the UI too -- this is a supplementary
 -- label, not a replacement, and it's scoped to one profile: the same
@@ -123,17 +118,16 @@ CREATE TABLE IF NOT EXISTS device_labels (
     PRIMARY KEY (profile_id, mac)
 );
 
--- ETHAN - one network-health score per scan ...
-
+-- ETHAN — one network-health score per scan (0-100), filled in by
+-- Storage.ensure_health_scores(). Deleting a scan (or its profile) deletes
+-- its score too.
 CREATE TABLE IF NOT EXISTS health_scores (
-scan_id         INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
-score           REAL NOT NULL,
-new_devices     INTEGER NOT NULL,
-missing_devices INTEGER NOT NULL,   
-unknown_vendors INTEGER NOT NULL
+    scan_id         INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+    score           REAL NOT NULL,
+    new_devices     INTEGER NOT NULL,
+    missing_devices INTEGER NOT NULL,
+    unknown_vendors INTEGER NOT NULL
 );
-
-
 
 
 -- Indexes for the query patterns the architecture doc calls out:
@@ -162,22 +156,6 @@ def _normalize_device(device: Any) -> dict:
 def _iso(value: datetime | None) -> str | None:
     """Consistent ISO-8601 formatting for anything we store/compare as a timestamp."""
     return value.isoformat(timespec="seconds") if value is not None else None
-
-
-# ETHAN — helpers for Storage.get_devices_with_filters()
-def _ip_sort_key(ip: str) -> tuple[int, int]:
-    """Numeric sort key so 192.168.1.2 sorts before 192.168.1.10 (plain string ORDER BY gets this wrong)."""
-    try:
-        return (0, int(ipaddress.IPv4Address(ip)))
-    except ValueError:
-        return (1, 0)  # malformed values sort last instead of crashing the whole query
-
-
-def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
-    try:
-        return ipaddress.IPv4Address(ip) in network
-    except ValueError:
-        return False
 
 
 class Storage:
@@ -251,6 +229,7 @@ class Storage:
         """Deletes a profile and — via ON DELETE CASCADE — all of its scans, scan_devices, and device_labels with it."""
         with self._connect() as conn:
             conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+
 
     # ------------------------------------------------------------------ #
     # Device naming — custom names for a MAC, scoped to ONE profile.
@@ -419,117 +398,6 @@ class Storage:
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ #
-    # ETHAN — Filtered retrieval
-    # One method for every "filter the device list" need
-    # ------------------------------------------------------------------ #
-    def get_devices_with_filters(
-        self,
-        profile_id: int,
-        *,
-        scan_id: int | None = None,
-        status: str | None = None,
-        ip: str | None = None,
-        ip_range: str | None = None,
-        vendor: str | None = None,
-        mac: str | None = None,
-        hostname: str | None = None,
-        hostname_regex: str | None = None,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        sort_by_ip: bool = False,
-    ) -> list[dict]:
-        """
-        Device sightings for one profile, narrowed by any combination of
-        filters (every filter is optional and they combine with AND).
-        Each row is one device in one scan, so the same MAC appears once
-        per scan it was seen in; scan_id and scan_time are included so the
-        caller can tell them apart. custom_name is filled in when set.
-
-        scan_id         only this scan (must belong to `profile_id`)
-        status          exact match, e.g. "online"
-        ip              exact IPv4 address
-        ip_range        CIDR such as "192.168.1.0/24"; keeps devices whose IP
-                        falls inside it (host bits are ignored, as in
-                        is_valid_ip_range's default)
-        vendor          exact match, case-insensitive
-        mac             case- and separator-insensitive ("aa-bb-..." matches
-                        "AA:BB:...")
-        hostname        exact match, case-insensitive
-        hostname_regex  regex searched in the hostname, case-insensitive
-        start / end     inclusive bounds on scan time, like get_scan_history
-        sort_by_ip      numeric IP order; default is oldest scan first
-
-        Raises ValueError for a malformed ip, ip_range, mac or regex,
-        rather than quietly returning [] and hiding the bug in the caller.
-        """
-        if ip is not None and not is_valid_ip(ip):
-            raise ValueError(f"Invalid IP address: {ip!r}")
-        if mac is not None and not is_valid_mac(mac):
-            raise ValueError(f"Invalid MAC address: {mac!r}")
-
-        network = None
-        if ip_range is not None:
-            if not is_valid_ip_range(ip_range):
-                raise ValueError(f"Invalid IP range: {ip_range!r}")
-            network = ipaddress.IPv4Network(ip_range, strict=False)
-
-        regex = None
-        if hostname_regex is not None:
-            try:
-                regex = re.compile(hostname_regex, re.IGNORECASE)
-            except re.error as exc:
-                raise ValueError(f"Invalid hostname regex {hostname_regex!r}: {exc}") from exc
-
-        query = """
-            SELECT s.id AS scan_id, s.scan_time,
-                   sd.ip, sd.mac, sd.vendor, sd.hostname, sd.status, sd.last_seen,
-                   dl.custom_name
-            FROM scan_devices sd
-            JOIN scans s ON s.id = sd.scan_id
-            LEFT JOIN device_labels dl ON dl.profile_id = s.profile_id AND dl.mac = sd.mac
-            WHERE s.profile_id = ?
-        """
-        params: list[Any] = [profile_id]
-        if scan_id is not None:
-            query += " AND s.id = ?"
-            params.append(scan_id)
-        if status is not None:
-            query += " AND sd.status = ?"
-            params.append(status)
-        if ip is not None:
-            query += " AND sd.ip = ?"
-            params.append(ip)
-        if vendor is not None:
-            query += " AND sd.vendor = ? COLLATE NOCASE"
-            params.append(vendor)
-        if mac is not None:
-            query += " AND REPLACE(UPPER(sd.mac), '-', ':') = ?"
-            params.append(mac.upper().replace("-", ":"))
-        if hostname is not None:
-            query += " AND sd.hostname = ? COLLATE NOCASE"
-            params.append(hostname)
-        if start is not None:
-            query += " AND s.scan_time >= ?"
-            params.append(_iso(start))
-        if end is not None:
-            query += " AND s.scan_time <= ?"
-            params.append(_iso(end))
-        query += " ORDER BY s.scan_time ASC, sd.id ASC"
-
-        with self._connect() as conn:
-            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
-
-        # SQLite has no CIDR or regex operators, so these two run in Python
-        # on the (already profile-scoped) rows.
-        if network is not None:
-            rows = [r for r in rows if _ip_in_network(r["ip"], network)]
-        if regex is not None:
-            rows = [r for r in rows if r["hostname"] and regex.search(r["hostname"])]
-        if sort_by_ip:
-            rows.sort(key=lambda r: _ip_sort_key(r["ip"]))  # stable: ties stay in scan-time order
-        return rows
-
-    # ------------------------------------------------------------------ #
     # Analytics — starter set; add more methods here as you build features
     # ------------------------------------------------------------------ #
     def compare_scans(self, scan_id_a: int, scan_id_b: int) -> dict:
@@ -675,6 +543,7 @@ class Storage:
     # status, add it back here, in the health_scores table and in
     # _compute_health_score().
 
+
     HEALTH_PENALTY_WEIGHTS = {
         "new": 100 / 3,
         "missing": 100 / 3,
@@ -779,51 +648,6 @@ class Storage:
         return dict(row) if row else None
 
     
-
-
-
-        # ------------------------------------------------------------------ #
-    # ETHAN — Network health score
-    # Moved here from the old dev2-analytics/netwatch_db.py. One 0-100 score
-    # per scan, based on how much the device list changed since the previous
-    # scan of the same profile + subnet, and how many devices have no
-    # vendor. Scores are filled in lazily by ensure_health_scores().
-    # ------------------------------------------------------------------ #
-
-    # The most points each factor can take off the score (they add up to 100).
-    # `offline_devices` is deliberately gone: the scanner only records devices
-    # that answered, so it was always 0. If the scanner ever records offline
-    # status, add it back here, in the health_scores table and in
-    # _compute_health_score().
-    
-    HEALTH_PENALTY_WEIGHTS = {
-        "new": 100 / 3,
-        "missing": 100 / 3,
-        "unknown_vendor": 100 / 3,
-    }
-
-    def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
-        """
-        The scan just before `scan_id` for the same profile AND the same
-        subnet (a scan of another network isn't a fair comparison). None if
-        this is the first one. Takes the caller's open connection so a whole
-        health-score pass runs on one connection.
-        """
-        row = conn.execute(
-            """
-            SELECT prev.id
-            FROM scans cur
-            JOIN scans prev ON prev.profile_id = cur.profile_id
-                           AND prev.subnet_cidr IS cur.subnet_cidr
-                           AND (prev.scan_time < cur.scan_time
-                                OR (prev.scan_time = cur.scan_time AND prev.id < cur.id))
-            WHERE cur.id = ?
-            ORDER BY prev.scan_time DESC, prev.id DESC
-            LIMIT 1
-            """,
-            (scan_id,),
-        ).fetchone()
-        return row["id"] if row else None
 
 
 # --------------------------------------------------------------------------- #
