@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS device_labels (
     PRIMARY KEY (profile_id, mac)
 );
 
+-- ETHAN - one network-health score per scan ...
+
+CREATE TABLE IF NOT EXISTS health_scores (
+scan_id         INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+score           REAL NOT NULL,
+new_devices     INTEGER NOT NULL,
+missing_devices INTEGER NOT NULL,
+unknown_vendors INTEGER NOT NULL
+);
+
+
+
+
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
 --   Hostname", "comparison of scans".
