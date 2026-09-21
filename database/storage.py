@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS scan_devices (
     last_seen TEXT NOT NULL   -- ISO-8601
 );
 
+
 -- Per-profile custom names for devices, keyed by MAC. The MAC address
 -- itself is always still shown in the UI too -- this is a supplementary
 -- label, not a replacement, and it's scoped to one profile: the same
@@ -116,6 +117,18 @@ CREATE TABLE IF NOT EXISTS device_labels (
     updated_at  TEXT NOT NULL,  -- ISO-8601
     PRIMARY KEY (profile_id, mac)
 );
+
+-- ETHAN — one network-health score per scan (0-100), filled in by
+-- Storage.ensure_health_scores(). Deleting a scan (or its profile) deletes
+-- its score too.
+CREATE TABLE IF NOT EXISTS health_scores (
+    scan_id         INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
+    score           REAL NOT NULL,
+    new_devices     INTEGER NOT NULL,
+    missing_devices INTEGER NOT NULL,
+    unknown_vendors INTEGER NOT NULL
+);
+
 
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
@@ -216,6 +229,7 @@ class Storage:
         """Deletes a profile and — via ON DELETE CASCADE — all of its scans, scan_devices, and device_labels with it."""
         with self._connect() as conn:
             conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
+
 
     # ------------------------------------------------------------------ #
     # Device naming — custom names for a MAC, scoped to ONE profile.
@@ -514,6 +528,126 @@ class Storage:
             present = conn.execute(present_query, params_present).fetchone()[0]
 
         return round((present / total) * 100, 1) if total else 0.0
+
+      # ------------------------------------------------------------------ #
+    # ETHAN — Network health score
+    # Moved here from the old dev2-analytics/netwatch_db.py. One 0-100 score
+    # per scan, based on how much the device list changed since the previous
+    # scan of the same profile + subnet, and how many devices have no
+    # vendor. Scores are filled in lazily by ensure_health_scores().
+    # ------------------------------------------------------------------ #
+
+    # The most points each factor can take off the score (they add up to 100).
+    # `offline_devices` is deliberately gone: the scanner only records devices
+    # that answered, so it was always 0. If the scanner ever records offline
+    # status, add it back here, in the health_scores table and in
+    # _compute_health_score().
+
+
+    HEALTH_PENALTY_WEIGHTS = {
+        "new": 100 / 3,
+        "missing": 100 / 3,
+        "unknown_vendor": 100 / 3,
+    }
+
+    def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
+        """
+        The scan just before `scan_id` for the same profile AND the same
+        subnet (a scan of another network isn't a fair comparison). None if
+        this is the first one. Takes the caller's open connection so a whole
+        health-score pass runs on one connection.
+        """
+        row = conn.execute(
+            """
+            SELECT prev.id
+            FROM scans cur
+            JOIN scans prev ON prev.profile_id = cur.profile_id
+                           AND prev.subnet_cidr IS cur.subnet_cidr
+                           AND (prev.scan_time < cur.scan_time
+                                OR (prev.scan_time = cur.scan_time AND prev.id < cur.id))
+            WHERE cur.id = ?
+            ORDER BY prev.scan_time DESC, prev.id DESC
+            LIMIT 1
+            """,
+            (scan_id,),
+        ).fetchone()
+        return row["id"] if row else None
+
+    def _compute_health_score(self, conn: sqlite3.Connection, scan_id: int) -> dict:
+        """Score (0-100) plus the counts behind it, for one scan. Doesn't save anything."""
+        current = conn.execute("SELECT mac, vendor FROM scan_devices WHERE scan_id = ?", (scan_id,)).fetchall()
+        current_macs = {row["mac"] for row in current}
+
+        previous_id = self._get_previous_scan_id(conn, scan_id)
+        if previous_id is None:
+            # First scan: there is nothing to compare with, so nothing counts as new or missing.
+            new_devices = missing_devices = 0
+        else:
+            previous_macs = {
+                row["mac"]
+                for row in conn.execute("SELECT mac FROM scan_devices WHERE scan_id = ?", (previous_id,))
+            }
+            new_devices = len(current_macs - previous_macs)
+            missing_devices = len(previous_macs - current_macs)
+
+        unknown_vendors = sum(1 for row in current if not row["vendor"])
+
+        total = len(current) or 1  # avoid dividing by zero on an empty scan
+        weights = self.HEALTH_PENALTY_WEIGHTS
+        penalty = (
+            (new_devices / total) * weights["new"]
+            + (missing_devices / total) * weights["missing"]
+            + (unknown_vendors / total) * weights["unknown_vendor"]
+        )
+        return {
+            "score": round(max(0.0, min(100.0, 100 - penalty)), 2),
+            "new_devices": new_devices,
+            "missing_devices": missing_devices,
+            "unknown_vendors": unknown_vendors,
+        }
+    
+    def ensure_health_scores(self, profile_id: int) -> int:
+        """
+        Gives every scan of this profile that has no health score yet one.
+        Safe to call as often as you like (the health page calls it every
+        time it opens); it only does work for scans added since last time.
+        Returns how many scores it added.
+        """
+        with self._connect() as conn:
+            unscored = conn.execute(
+                """
+                SELECT s.id
+                FROM scans s
+                LEFT JOIN health_scores h ON h.scan_id = s.id
+                WHERE s.profile_id = ? AND h.scan_id IS NULL
+                ORDER BY s.scan_time, s.id
+                """,
+                (profile_id,),
+            ).fetchall()
+            for row in unscored:
+                data = self._compute_health_score(conn, row["id"])
+                conn.execute(
+                    "INSERT INTO health_scores (scan_id, score, new_devices, missing_devices, unknown_vendors) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (row["id"], data["score"], data["new_devices"], data["missing_devices"], data["unknown_vendors"]),
+                )
+        return len(unscored)
+
+    def get_health_score(self, scan_id: int) -> dict | None:
+        """The stored score for one scan (with its scan_time), or None if it hasn't been scored yet."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT h.scan_id, s.scan_time, h.score, h.new_devices, h.missing_devices, h.unknown_vendors
+                FROM health_scores h
+                JOIN scans s ON s.id = h.scan_id
+                WHERE h.scan_id = ?
+                """,
+                (scan_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    
 
 
 # --------------------------------------------------------------------------- #
