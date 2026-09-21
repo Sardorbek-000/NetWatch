@@ -1,9 +1,9 @@
 """
 NetWatch — Frontend (Module 3)
 ================================================================
-The CustomTkinter desktop app: every screen (Main Menu, Add Profile,
-Settings, Profile, Port Scan) plus the NetWatchApp shell that switches
-between them. Talks to the database only through database/storage.py's
+The CustomTkinter desktop app: the NetWatchApp shell, plus every screen
+that isn't split into its own UI/pages/*.py file yet (currently just
+PortScan). Talks to the database only through database/storage.py's
 Storage class — no SQL lives in this file.
 
 ----------------------------------------------------------------------
@@ -23,17 +23,24 @@ HOW TO RUN
 ----------------------------------------------------------------------
 HOW THE SCREENS FIT TOGETHER
 ----------------------------------------------------------------------
-NetWatchApp creates ALL of MainMenu/Settings/AddProfile/PortScan once,
-stacks them on top of each other with .place(), and show_frame() just
-raises the one that should be on top (self.frames[frame_class].tkraise()).
-Profile is the odd one out: a new instance is built every time you enter
-a profile (open_profile()) because, unlike the others, it needs data
-(profile id/name) at construction time.
+NetWatchApp builds every page in PAGES once, stacks them on top of each
+other with .place(), and keys them by class name in self.frames (e.g.
+self.frames["MainMenuPage"]). Nothing is rebuilt on navigation — there's
+no per-profile Profile instance like the old build; ProfilePage instead
+reads self.app.current_profile_id/current_profile_name, which
+MainMenuPage.enter_profile() sets right before navigating there.
 
-Any screen that shows data pulled from the database (profile lists,
-scan results) refreshes it in an overridden tkraise() — CustomTkinter
-doesn't have a built-in "screen became visible" event, so overriding
-tkraise() is this codebase's way of hooking that moment.
+self.show_frame(name, **kwargs) is how every screen navigates: it looks
+up self.frames[name], calls that frame's on_show(**kwargs) if it has one,
+then raises it. on_show is this codebase's "screen became visible" hook
+(CustomTkinter has no built-in event for that) — pages that show
+database-backed data (profile lists, the profile hub's title) requery
+Storage there instead of caching stale data across navigations.
+
+self._on_close() is wired to the window's close button
+(WM_DELETE_WINDOW) and calls on_close() on every frame that defines
+one, before destroying the window — the hook a page would use to stop
+any background work (e.g. a running scan thread) on exit.
 """
 
 import queue
