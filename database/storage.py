@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS health_scores (
 scan_id         INTEGER PRIMARY KEY REFERENCES scans(id) ON DELETE CASCADE,
 score           REAL NOT NULL,
 new_devices     INTEGER NOT NULL,
-missing_devices INTEGER NOT NULL,
+missing_devices INTEGER NOT NULL,   
 unknown_vendors INTEGER NOT NULL
 );
 
@@ -660,6 +660,51 @@ class Storage:
             present = conn.execute(present_query, params_present).fetchone()[0]
 
         return round((present / total) * 100, 1) if total else 0.0
+
+
+
+        # ------------------------------------------------------------------ #
+    # ETHAN — Network health score
+    # Moved here from the old dev2-analytics/netwatch_db.py. One 0-100 score
+    # per scan, based on how much the device list changed since the previous
+    # scan of the same profile + subnet, and how many devices have no
+    # vendor. Scores are filled in lazily by ensure_health_scores().
+    # ------------------------------------------------------------------ #
+
+    # The most points each factor can take off the score (they add up to 100).
+    # `offline_devices` is deliberately gone: the scanner only records devices
+    # that answered, so it was always 0. If the scanner ever records offline
+    # status, add it back here, in the health_scores table and in
+    # _compute_health_score().
+    
+    HEALTH_PENALTY_WEIGHTS = {
+        "new": 100 / 3,
+        "missing": 100 / 3,
+        "unknown_vendor": 100 / 3,
+    }
+
+    def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
+        """
+        The scan just before `scan_id` for the same profile AND the same
+        subnet (a scan of another network isn't a fair comparison). None if
+        this is the first one. Takes the caller's open connection so a whole
+        health-score pass runs on one connection.
+        """
+        row = conn.execute(
+            """
+            SELECT prev.id
+            FROM scans cur
+            JOIN scans prev ON prev.profile_id = cur.profile_id
+                           AND prev.subnet_cidr IS cur.subnet_cidr
+                           AND (prev.scan_time < cur.scan_time
+                                OR (prev.scan_time = cur.scan_time AND prev.id < cur.id))
+            WHERE cur.id = ?
+            ORDER BY prev.scan_time DESC, prev.id DESC
+            LIMIT 1
+            """,
+            (scan_id,),
+        ).fetchone()
+        return row["id"] if row else None
 
 
 # --------------------------------------------------------------------------- #
