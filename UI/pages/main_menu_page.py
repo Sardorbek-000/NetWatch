@@ -1,7 +1,6 @@
 import customtkinter as ctk
 
 
-
 class MainMenuPage(ctk.CTkFrame):
     """Landing screen: lists every saved profile as a button, plus the Scan Ports / Add Profile / Settings entry points."""
 
@@ -27,4 +26,4 @@ class MainMenuPage(ctk.CTkFrame):
     def enter_profile(self, profile):
         self.app.current_profile_id = profile["id"]
         self.app.current_profile_name = profile["name"]
-        #TODO self.app.show_frame(self.app.current_profile_name) -- gonna impement it
+        self.app.show_frame("ProfilePage")

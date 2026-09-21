@@ -46,6 +46,7 @@ from UI.notifier import notify
 from UI.pages.add_profile_page import AddProfilePage
 from UI.pages.main_menu_page import MainMenuPage
 from UI.pages.settings_page import SettingsPage
+from UI.pages.profile_page import ProfilePage
 from database.storage import Storage
 
 
@@ -67,7 +68,7 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan]
+        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan, ProfilePage]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -227,33 +228,6 @@ class PortScan(ctk.CTkFrame):
         self.scan_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.scanner = None
-
-class Profile(ctk.CTkFrame):
-    """
-    Hub for one Location Profile (e.g. "Home"). A fresh instance is built
-    every time open_profile() runs, unlike the other screens which are
-    built once — that's how it receives which profile it's showing.
-
-    "Start Scanning" and "History" have no command= yet — scanning needs
-    the same background-thread/queue pattern as PortScan above (network
-    scans are blocking calls too), just wired up to WirelessScanner/
-    LANScanner + Storage.save_scan() instead of PortScanner. Not
-    implemented yet.
-    """
-
-    def __init__(self, parent, app, profile):
-        super().__init__(parent, fg_color="transparent")
-        self.profile_name = profile["name"]
-        self.profile_id = profile["id"]
-        ctk.CTkLabel(self, text=self.profile_name, font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(40, 30))
-
-        ctk.CTkButton(self, text="Start Scanning", width=220).pack(pady=10)
-        ctk.CTkButton(self, text="History", width=220).pack(pady=10)
-        ctk.CTkButton(self, text="Go Back to Menu", width=220,
-                      command=lambda: app.show_frame(MainMenu)).pack(pady=10)
-
-    def get_profile_name(self):
-        return self.profile_name
 
 
 
