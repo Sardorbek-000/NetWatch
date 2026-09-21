@@ -736,6 +736,47 @@ class Storage:
             "missing_devices": missing_devices,
             "unknown_vendors": unknown_vendors,
         }
+    
+    def ensure_health_scores(self, profile_id: int) -> int:
+        """
+        Gives every scan of this profile that has no health score yet one.
+        Safe to call as often as you like (the health page calls it every
+        time it opens); it only does work for scans added since last time.
+        Returns how many scores it added.
+        """
+        with self._connect() as conn:
+            unscored = conn.execute(
+                """
+                SELECT s.id
+                FROM scans s
+                LEFT JOIN health_scores h ON h.scan_id = s.id
+                WHERE s.profile_id = ? AND h.scan_id IS NULL
+                ORDER BY s.scan_time, s.id
+                """,
+                (profile_id,),
+            ).fetchall()
+            for row in unscored:
+                data = self._compute_health_score(conn, row["id"])
+                conn.execute(
+                    "INSERT INTO health_scores (scan_id, score, new_devices, missing_devices, unknown_vendors) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (row["id"], data["score"], data["new_devices"], data["missing_devices"], data["unknown_vendors"]),
+                )
+        return len(unscored)
+
+    def get_health_score(self, scan_id: int) -> dict | None:
+        """The stored score for one scan (with its scan_time), or None if it hasn't been scored yet."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT h.scan_id, s.scan_time, h.score, h.new_devices, h.missing_devices, h.unknown_vendors
+                FROM health_scores h
+                JOIN scans s ON s.id = h.scan_id
+                WHERE h.scan_id = ?
+                """,
+                (scan_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
     
 
