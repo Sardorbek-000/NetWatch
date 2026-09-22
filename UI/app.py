@@ -55,7 +55,11 @@ from UI.pages.main_menu_page import MainMenuPage
 from UI.pages.settings_page import SettingsPage
 from UI.pages.profile_page import ProfilePage
 from database.storage import Storage
-
+from UI.pages.scan_page import ScanPage
+from UI.pages.history_page import HistoryPage
+from UI.pages.scan_detail_page import ScanDetailPage
+from UI.pages.compare_scans_page import CompareScansPage
+from UI.pages.device_manager_page import DeviceManagerPage
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -75,7 +79,10 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan, ProfilePage]
+        PAGES = [
+    MainMenuPage, SettingsPage, AddProfilePage, PortScan, ProfilePage,
+    ScanPage, HistoryPage, ScanDetailPage, CompareScansPage, DeviceManagerPage,
+]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 

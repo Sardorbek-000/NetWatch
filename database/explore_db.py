@@ -14,7 +14,7 @@ Usage:
 
 import argparse
 
-from storage import Storage
+from database.storage import Storage
 
 
 def main() -> None:

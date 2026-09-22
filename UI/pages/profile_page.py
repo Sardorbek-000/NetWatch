@@ -11,9 +11,12 @@ class ProfilePage(ctk.CTkFrame):
         self.title_label = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=24, weight="bold"))
         self.title_label.pack(pady=(40, 30))
 
-        # ctk.CTkButton(self, text="Start Scanning", width=220).pack(pady=10)   # TODO(Sardor)
-        # ctk.CTkButton(self, text="History", width=220).pack(pady=10)          # TODO(Sardor)
-        # ctk.CTkButton(self, text="Manage Devices", width=220).pack(pady=10)   # TODO(Sardor)
+        ctk.CTkButton(self, text="Start Scanning", width=220,
+              command=lambda: self.app.show_frame("ScanPage")).pack(pady=10)
+        ctk.CTkButton(self, text="History", width=220,
+              command=lambda: self.app.show_frame("HistoryPage")).pack(pady=10)
+        ctk.CTkButton(self, text="Manage Devices", width=220,
+              command=lambda: self.app.show_frame("DeviceManagerPage")).pack(pady=10)
 
         ctk.CTkButton(self, text="Port Scan", width=220,
                       command=lambda: self.app.show_frame("PortScan")).pack(pady=10) 
