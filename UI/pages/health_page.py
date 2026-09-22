@@ -2,10 +2,10 @@
 NetWatch — Health page (Module 3 / Ethan's Task 4)
 ================================================================
 Shows the current profile's network health score plus a trend chart
-over the last TREND_DAYS days. Built once and stacked with every other
-page in UI/app.py's PAGES list; on_show() re-queries Storage every time
-the page becomes visible instead of caching stale data — same pattern
-as ProfilePage.
+with a 7 days / 30 days / All range selector. Built once and stacked
+with every other page in UI/app.py's PAGES list; on_show() re-queries
+Storage every time the page becomes visible instead of caching stale
+data — same pattern as ProfilePage.
 
 Ported from the old standalone HealthPanel (dev2-analytics/health_panel.py):
   - self.connection + ip_range          -> self.app.storage + self.app.current_profile_id
@@ -34,9 +34,7 @@ TREND_RANGES = {"7 days": 7, "30 days": 30, "All": None}
 
 
 class HealthPage(ctk.CTkFrame):
-    """Current profile's health score + trend."""
-    ...
-    TREND_DAYS = 14
+    """Current profile's health score + trend, with a date-range selector."""
 
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
@@ -76,7 +74,7 @@ class HealthPage(ctk.CTkFrame):
         trend_title = ctk.CTkLabel(header_frame, text="Trend", font=ctk.CTkFont(size=14, weight="bold"))
         trend_title.pack(side="left")
 
-        # Step 12 Date Range Selector
+        # Date range selector
         self.range_selector = ctk.CTkSegmentedButton(
             header_frame,
             values=list(TREND_RANGES),
@@ -91,6 +89,7 @@ class HealthPage(ctk.CTkFrame):
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=trend_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+
     def _build_nav_section(self):
         ctk.CTkButton(self, text="Back to Profile", width=220,
                       command=lambda: self.app.show_frame("ProfilePage")).pack(pady=(0, 10))
@@ -162,7 +161,7 @@ class HealthPage(ctk.CTkFrame):
         # Read selected days from range selector
         days = TREND_RANGES[self.range_selector.get()]
         start = datetime.now() - timedelta(days=days) if days is not None else None
-        
+
         history = self.app.storage.get_scan_history(profile_id, start=start)
 
         points = []
@@ -189,15 +188,6 @@ class HealthPage(ctk.CTkFrame):
             self.figure.tight_layout()
 
         self.canvas.draw()
-
-    
-    def _build_nav_section(self):
-        ctk.CTkButton(
-            self, 
-            text="Go Back to Main Menu", 
-            width=220,
-            command=lambda: self.app.show_frame("MainMenuPage")
-        ).pack(pady=(0, 10))
 
     @staticmethod
     def _color_for_score(score):
