@@ -1,7 +1,6 @@
 import queue          # --- FIX: work queue for the fixed worker pool ---
 import socket
 import threading
-from database.PortParsingDatabase import ParsePortsDb
 
 
 class PortScanner:
@@ -23,7 +22,6 @@ class PortScanner:
         self.timeout = timeout
         self.open_ports = []
         self.total_ports = len(self.ports)
-        self.parse_ports_db = ParsePortsDb()
 
         self.on_result = on_result
         self.on_progress = on_progress
@@ -53,7 +51,6 @@ class PortScanner:
 
             with self._lock:
                 self.open_ports.append(port)
-            self.parse_ports_db.InsertOpenPort(self.host, port)
 
             if self.on_result:
                 self.on_result(port)
