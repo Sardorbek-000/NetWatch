@@ -1,0 +1,18 @@
+# NetWatch dependencies. Install with: pip install -r requirements.txt
+# Then run the app from the repo root with: python -m UI.app
+
+# UI
+customtkinter==6.0.0
+
+# core/wireless_scanner.py: ARP scanning + MAC vendor lookup
+scapy==2.7.0
+mac-vendor-lookup==0.1.15
+
+# UI/notifier.py: desktop "scan finished" notifications
+desktop-notifier==6.2.0
+
+# dev2-analytics/health_panel.py: health score trend chart
+matplotlib==3.11.2
+
+# test suite (tests/, dev2-analytics/test_*.py): python -m pytest
+pytest==9.1.1
