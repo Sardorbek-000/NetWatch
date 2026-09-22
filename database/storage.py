@@ -647,6 +647,28 @@ class Storage:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_latest_health_score(self, profile_id):
+        """Returns the health score dict for the most recent scan of a profile, or None."""
+        history = self.get_scan_history(profile_id)
+        if not history:
+            return None
+        latest_scan_id = history[-1]["id"]
+        return self.get_health_score(latest_scan_id)
+
+    def get_health_trend(self, profile_id, start=None, end=None):
+        """Returns a list of dicts with scan_time and score for a profile within optional date boundaries."""
+        history = self.get_scan_history(profile_id, start=start, end=end)
+        results = []
+        for scan in history:
+            score_row = self.get_health_score(scan["id"])
+            if score_row is not None:
+                results.append({
+                    "scan_id": scan["id"],
+                    "scan_time": scan["scan_time"],
+                    "score": score_row["score"]
+                })
+        return results
+
     
 
 
