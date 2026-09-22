@@ -55,6 +55,8 @@ from UI.pages.main_menu_page import MainMenuPage
 from UI.pages.settings_page import SettingsPage
 from UI.pages.profile_page import ProfilePage
 from database.storage import Storage
+from UI.pages.main_menu_page import MainMenuPage as MainMenu
+from UI.pages.health_page import HealthPage  # Adjust path if different
 
 
 ctk.set_appearance_mode("dark")
@@ -75,7 +77,7 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_id = None
         self.current_profile_name = None
 
-        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan, ProfilePage]
+        PAGES = [MainMenuPage, SettingsPage, AddProfilePage, PortScan, ProfilePage, HealthPage]
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
