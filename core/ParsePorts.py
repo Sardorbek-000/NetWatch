@@ -14,8 +14,19 @@ class PortScanner:
         9418, 10000, 11211, 15672, 27017, 27018, 32400,
     })
 
-    def __init__(self, host, ports=None, max_threads=100, timeout=0.5,
+    def __init__(self, host, ports=None, max_threads=3, timeout=0.5,
                  on_result=None, on_progress=None, on_done=None):
+        """
+        max_threads default lowered from 100 to 3: testing against a real
+        LAN host (not localhost) found that firing several simultaneous
+        connect_ex() calls at one host causes intermittent false
+        negatives — the real open port's handshake gets delayed past the
+        fixed `timeout` under contention, most likely because the
+        target/NAT can't service several simultaneous new connections
+        from one source fast enough. Scans were 100% reliable across
+        repeated tests at max_threads <= 3, and started missing ports at
+        >= 4. This trades scan speed for correctness on "All Ports" mode.
+        """
         self.host = host
         self.ports = list(ports) if ports is not None else list(range(1, 65536))
         self.max_threads = max_threads
