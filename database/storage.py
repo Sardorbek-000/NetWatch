@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS health_scores (
     unknown_vendors INTEGER NOT NULL
 );
 
+-- AMIN — open ports found by a manual port scan, linked to a profile
+-- (not to a specific scan — a port scan is a separate on-demand action,
+-- not part of the periodic network scan).
+CREATE TABLE IF NOT EXISTS open_ports (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    ip         TEXT NOT NULL,
+    port       INTEGER NOT NULL,
+    scan_time  TEXT NOT NULL
+);
+
 
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
@@ -136,6 +147,7 @@ CREATE TABLE IF NOT EXISTS health_scores (
 CREATE INDEX IF NOT EXISTS idx_scans_profile_time  ON scans(profile_id, scan_time);
 CREATE INDEX IF NOT EXISTS idx_scan_devices_scan_id ON scan_devices(scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_devices_mac     ON scan_devices(mac);
+CREATE INDEX IF NOT EXISTS idx_open_ports_profile_ip ON open_ports(profile_id, ip);
 """
 
 
@@ -528,6 +540,29 @@ class Storage:
             present = conn.execute(present_query, params_present).fetchone()[0]
 
         return round((present / total) * 100, 1) if total else 0.0
+
+    # ------------------------------------------------------------------ #
+    # Port scanning (Amin)
+    # ------------------------------------------------------------------ #
+    def save_open_port(self, profile_id: int, ip: str, port: int) -> None:
+        """Records one open port found by a manual port scan, for this profile."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO open_ports (profile_id, ip, port, scan_time) VALUES (?, ?, ?, ?)",
+                (profile_id, ip, port, _iso(datetime.now())),
+            )
+
+    def get_open_ports(self, profile_id: int, ip: str | None = None) -> list[dict]:
+        """Past open-port scan results for this profile, newest first. Filterable to one host."""
+        sql = "SELECT ip, port, scan_time FROM open_ports WHERE profile_id = ?"
+        params: list[Any] = [profile_id]
+        if ip is not None:
+            sql += " AND ip = ?"
+            params.append(ip)
+        sql += " ORDER BY scan_time DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
 
       # ------------------------------------------------------------------ #
     # ETHAN — Network health score
