@@ -18,6 +18,8 @@ class ProfilePage(ctk.CTkFrame):
         ctk.CTkButton(self, text="Manage Devices", width=220,
               command=lambda: self.app.show_frame("DeviceManagerPage")).pack(pady=10)
 
+        ctk.CTkButton(self, text="Network Health", width=220,
+                      command=lambda: self.app.show_frame("HealthPage")).pack(pady=10)
         ctk.CTkButton(self, text="Port Scan", width=220,
                       command=lambda: self.app.show_frame("PortScanPage")).pack(pady=10)
         ctk.CTkButton(self, text="Go Back to Menu", width=220,

@@ -3,4 +3,6 @@ venv/
 __pycache__/
 *.pyc
 .idea/
+*.dbnetwatch.db 
+
 *.db
