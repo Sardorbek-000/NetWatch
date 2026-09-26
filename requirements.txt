@@ -11,8 +11,8 @@ mac-vendor-lookup==0.1.15
 # UI/notifier.py: desktop "scan finished" notifications
 desktop-notifier==6.2.0
 
-# dev2-analytics/health_panel.py: health score trend chart
+# UI/pages/health_page.py: health score trend chart
 matplotlib==3.11.2
 
-# test suite (tests/, dev2-analytics/test_*.py): python -m pytest
+# test suite (tests/): python -m pytest
 pytest==9.1.1
