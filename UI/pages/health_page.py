@@ -3,7 +3,9 @@ NetWatch — Health page (Module 3 / Ethan's Task 4)
 ================================================================
 Shows the current profile's latest scan stats plus separate trend
 graphs (total devices, new devices, missing devices, unknown-vendor
-devices) with a 7 days / 30 days / All range selector.
+devices) with a 7 days / 30 days / All range selector. Bars are
+clickable — picking one opens a popup listing the actual devices
+behind that count for that scan.
 
 --- ETHAN — redone in response to teacher feedback ---
 The original version of this page collapsed new/missing/unknown-vendor
@@ -33,9 +35,27 @@ So this version:
     and consistent spacing/margins (fixed subplots_adjust() instead of
     tight_layout(), which fought with the explicit hspace between
     subplots).
+  - Explainability pass (per teacher feedback, take 2): a caption under
+    the graphs spells out what "new"/"missing" mean and that bars are
+    clickable; the "Total devices" snapshot number now shows its change
+    since the previous scan (new_devices/missing_devices are ALREADY a
+    period-over-period comparison to the previous scan by definition —
+    see _compute_health_score() in storage.py — so a separate "+2 since
+    last scan" line for those would just repeat numbers already on
+    screen; device_count is the one metric that's a running total rather
+    than a per-scan delta, so it's the one that benefits from showing
+    its own change).
+  - Click-to-detail: clicking a bar opens a small popup listing the
+    devices behind that count, using the SAME previous-scan definition
+    the score itself uses (Storage.get_previous_scan_id(), same subnet)
+    rather than an approximation, so the popup's device list always
+    matches the number on the bar.
+  - Export: a "Save chart" button writes the current four-graph figure
+    to a PNG the user picks a location for.
 """
 
 from datetime import datetime, timedelta
+from tkinter import filedialog
 
 import customtkinter as ctk
 from matplotlib.figure import Figure
@@ -67,13 +87,20 @@ TREND_METRICS = [
     ("unknown_vendors", "Unknown vendor", "#f1c40f"),    # yellow — data-quality gap
 ]
 
+CAPTION_TEXT = (
+    "Each bar is one scan. \"New\" / \"Missing\" compare a scan only to the "
+    "scan immediately before it, not to the whole history. Click a bar to "
+    "see which devices it's counting."
+)
+
 
 class HealthPage(ctk.CTkFrame):
-    """Current profile's latest scan stats + three separate metric trends."""
+    """Current profile's latest scan stats + four clickable metric-trend bar charts."""
 
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
         self.app = app
+        self._current_rows = []  # rows behind the currently-drawn bars, same order as the x-axis
 
         self._build_snapshot_section()
         self._build_trend_section()
@@ -120,7 +147,11 @@ class HealthPage(ctk.CTkFrame):
             command=lambda _choice: self._refresh_trend_charts()
         )
         self.range_selector.set("30 days")
-        self.range_selector.pack(side="right")
+        self.range_selector.pack(side="right", padx=(8, 0))
+
+        self.export_button = ctk.CTkButton(header_frame, text="Save chart", width=90,
+                                            command=self._export_chart)
+        self.export_button.pack(side="right")
 
         # Stacked subplots, one per metric, sharing an x-axis so e.g. the
         # "new" vs "missing" graphs can be visually compared scan-to-scan.
@@ -131,7 +162,15 @@ class HealthPage(ctk.CTkFrame):
         self.figure.subplots_adjust(hspace=0.55)
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=trend_frame)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=14, pady=(6, 14))
+        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=14, pady=(6, 4))
+        # Bars are clickable — see _on_bar_click() for what happens.
+        self.canvas.mpl_connect("button_press_event", self._on_bar_click)
+
+        self.caption_label = ctk.CTkLabel(
+            trend_frame, text=CAPTION_TEXT, font=ctk.CTkFont(size=FONT_SIZE_CAPTION),
+            text_color="gray60", justify="left", anchor="w", wraplength=700
+        )
+        self.caption_label.pack(fill="x", padx=14, pady=(0, 14))
 
     def _build_nav_section(self):
         ctk.CTkButton(self, text="Back to Profile", width=220,
@@ -174,9 +213,22 @@ class HealthPage(ctk.CTkFrame):
             self.snapshot_time_label.configure(text="")
             return
 
+        latest_count = history[-1]["device_count"]
+        # device_count is a running total, not a delta, so — unlike
+        # new_devices/missing_devices, which already ARE the change since
+        # the previous scan — it's the one number here worth diffing
+        # against the previous scan itself. len(history) > 1 guards the
+        # very first scan, which has nothing before it to compare to.
+        if len(history) > 1:
+            previous_count = history[-2]["device_count"]
+            delta = latest_count - previous_count
+            delta_text = f" ({'+' if delta >= 0 else ''}{delta} since last scan)"
+        else:
+            delta_text = ""
+
         self.snapshot_label.configure(
             text=(
-                f"Total devices: {history[-1]['device_count']}     "
+                f"Total devices: {latest_count}{delta_text}     "
                 f"New devices: {row['new_devices']}     "
                 f"Missing: {row['missing_devices']}     "
                 f"Unknown vendor: {row['unknown_vendors']}"
@@ -209,6 +261,8 @@ class HealthPage(ctk.CTkFrame):
         start = datetime.now() - timedelta(days=days) if days is not None else None
 
         rows = self.app.storage.get_health_trend(profile_id, start=start)
+        self._current_rows = rows  # remembered for _on_bar_click()
+
         # Categorical (index-based) x-axis instead of real elapsed time:
         # scans can be minutes or days apart, and a bar chart's bar widths
         # would either look inconsistent or need constant retuning if tied
@@ -254,3 +308,91 @@ class HealthPage(ctk.CTkFrame):
         # room on the left for the "Devices" y-axis labels.
         self.figure.subplots_adjust(left=0.12, right=0.97, top=0.95, bottom=0.12, hspace=0.55)
         self.canvas.draw()
+
+    # ------------------------------------------------------------------ #
+    # Click-to-detail
+    # ------------------------------------------------------------------ #
+    def _on_bar_click(self, event):
+        if event.inaxes not in self.axes or not self._current_rows:
+            return
+
+        metric_index = list(self.axes).index(event.inaxes)
+        key, title, _color = TREND_METRICS[metric_index]
+
+        # Find which bar (if any) was actually clicked, rather than
+        # guessing from event.xdata alone — robust to the bar width and
+        # to clicks that land in the gap between bars (those are ignored).
+        clicked_row_index = None
+        for i, bar in enumerate(event.inaxes.patches):
+            if bar.contains(event)[0]:
+                clicked_row_index = i
+                break
+        if clicked_row_index is None or clicked_row_index >= len(self._current_rows):
+            return
+
+        row = self._current_rows[clicked_row_index]
+        self._show_detail_popup(key, title, row)
+
+    def _show_detail_popup(self, key, title, row):
+        scan_id = row["scan_id"]
+        storage = self.app.storage
+
+        if key == "device_count":
+            devices = storage.get_devices_for_scan(scan_id)
+        elif key == "unknown_vendors":
+            devices = [d for d in storage.get_devices_for_scan(scan_id) if not d["vendor"]]
+        else:
+            # new_devices / missing_devices: same "previous scan" definition
+            # the score itself was computed from (same profile, same
+            # subnet), so the popup's list always matches the bar's number.
+            previous_scan_id = storage.get_previous_scan_id(scan_id)
+            if previous_scan_id is None:
+                devices = []
+            else:
+                comparison = storage.compare_scans(previous_scan_id, scan_id)
+                devices = comparison["new_devices"] if key == "new_devices" else comparison["disconnected_devices"]
+
+        popup = ctk.CTkToplevel(self)
+        popup.title(f"{title} — scan at {row['scan_time']}")
+        popup.geometry("480x360")
+        # Keep the popup above the main window and focused, same pattern
+        # CustomTkinter apps typically use for detail dialogs.
+        popup.transient(self.winfo_toplevel())
+        popup.grab_set()
+
+        header = ctk.CTkLabel(popup, text=f"{title} ({len(devices)})",
+                               font=ctk.CTkFont(size=FONT_SIZE_SECTION_TITLE, weight="bold"))
+        header.pack(anchor="w", padx=14, pady=(14, 4))
+
+        if not devices:
+            ctk.CTkLabel(popup, text="No devices in this category for this scan.",
+                         text_color="gray60").pack(anchor="w", padx=14, pady=(0, 14))
+        else:
+            list_frame = ctk.CTkScrollableFrame(popup)
+            list_frame.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+            for device in devices:
+                label = device["custom_name"] or device["hostname"] or "(unnamed device)"
+                text = f"{label}   {device['ip']}   {device['mac']}"
+                if device["vendor"]:
+                    text += f"   {device['vendor']}"
+                ctk.CTkLabel(list_frame, text=text, anchor="w", justify="left").pack(fill="x", pady=2)
+
+        ctk.CTkButton(popup, text="Close", width=90, command=popup.destroy).pack(pady=(0, 14))
+
+    # ------------------------------------------------------------------ #
+    # Export
+    # ------------------------------------------------------------------ #
+    def _export_chart(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG image", "*.png")],
+            title="Save chart as",
+        )
+        if not path:
+            return  # user cancelled
+        try:
+            self.figure.savefig(path, facecolor=CHART_BG)
+        except OSError as e:
+            # Don't crash the page over a bad path/permissions issue —
+            # just report it inline the same way other pages surface errors.
+            ctk.CTkLabel(self, text=f"Couldn't save chart: {e}", text_color="#e74c3c").pack(pady=(0, 6))

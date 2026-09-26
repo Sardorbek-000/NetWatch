@@ -585,6 +585,16 @@ class Storage:
         "unknown_vendor": 100 / 3,
     }
 
+    def get_previous_scan_id(self, scan_id: int) -> int | None:
+        """
+        Public wrapper around _get_previous_scan_id() for callers outside
+        this class (e.g. HealthPage's click-to-detail popup) that need the
+        exact same "previous scan" definition used for scoring — same
+        profile, same subnet — rather than approximating it themselves.
+        """
+        with self._connect() as conn:
+            return self._get_previous_scan_id(conn, scan_id)
+
     def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
         """
         The scan just before `scan_id` for the same profile AND the same
