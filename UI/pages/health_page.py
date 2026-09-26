@@ -389,7 +389,7 @@ class HealthPage(ctk.CTkFrame):
             title="Save chart as",
         )
         if not path:
-            return  # user cancelled
+            return  # user cancelled    
         try:
             self.figure.savefig(path, facecolor=CHART_BG)
         except OSError as e:
