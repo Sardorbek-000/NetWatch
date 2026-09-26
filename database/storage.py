@@ -585,6 +585,16 @@ class Storage:
         "unknown_vendor": 100 / 3,
     }
 
+    def get_previous_scan_id(self, scan_id: int) -> int | None:
+        """
+        Public wrapper around _get_previous_scan_id() for callers outside
+        this class (e.g. HealthPage's click-to-detail popup) that need the
+        exact same "previous scan" definition used for scoring — same
+        profile, same subnet — rather than approximating it themselves.
+        """
+        with self._connect() as conn:
+            return self._get_previous_scan_id(conn, scan_id)
+
     def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
         """
         The scan just before `scan_id` for the same profile AND the same
@@ -691,7 +701,20 @@ class Storage:
         return self.get_health_score(latest_scan_id)
 
     def get_health_trend(self, profile_id, start=None, end=None):
-        """Returns a list of dicts with scan_time and score for a profile within optional date boundaries."""
+        """
+        Returns a list of dicts with scan_time plus the raw per-scan metric
+        breakdown (new_devices, missing_devices, unknown_vendors,
+        device_count) for a profile within optional date boundaries.
+
+        ETHAN — returns the raw counts (not just the blended score) so the
+        UI can plot each metric as its own trend line instead of folding
+        them into one index. See health_page.py's _refresh_trend_charts().
+        The composite score is still included for anyone who wants it, but
+        HealthPage no longer uses it as of the graphs-instead-of-index redo.
+        device_count comes straight from the scans table (already tracked
+        for the History screen) — added here so it can plot as a fourth
+        trend line alongside new/missing/unknown-vendor.
+        """
         history = self.get_scan_history(profile_id, start=start, end=end)
         results = []
         for scan in history:
@@ -700,7 +723,11 @@ class Storage:
                 results.append({
                     "scan_id": scan["id"],
                     "scan_time": scan["scan_time"],
-                    "score": score_row["score"]
+                    "score": score_row["score"],
+                    "new_devices": score_row["new_devices"],
+                    "missing_devices": score_row["missing_devices"],
+                    "unknown_vendors": score_row["unknown_vendors"],
+                    "device_count": scan["device_count"],
                 })
         return results
 
