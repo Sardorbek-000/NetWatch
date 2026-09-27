@@ -62,12 +62,24 @@ CREATE TABLE IF NOT EXISTS device_labels (
     PRIMARY KEY (profile_id, mac)
 );
 
+-- AMIN — open ports found by a manual port scan, linked to a profile
+-- (not to a specific scan — a port scan is a separate on-demand action,
+-- not part of the periodic network scan).
+CREATE TABLE IF NOT EXISTS open_ports (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    ip         TEXT NOT NULL,
+    port       INTEGER NOT NULL,
+    scan_time  TEXT NOT NULL
+);
+
 -- Indexes for the query patterns the architecture doc calls out:
 --   "searchable by date/time", "filtering by IP/MAC/... Vendor, Status,
 --   Hostname", "comparison of scans".
 CREATE INDEX IF NOT EXISTS idx_scans_profile_time  ON scans(profile_id, scan_time);
 CREATE INDEX IF NOT EXISTS idx_scan_devices_scan_id ON scan_devices(scan_id);
 CREATE INDEX IF NOT EXISTS idx_scan_devices_mac     ON scan_devices(mac);
+CREATE INDEX IF NOT EXISTS idx_open_ports_profile_ip ON open_ports(profile_id, ip);
 
 -- ETHAN — one network-health score per scan (0-100), filled in by
 -- Storage.ensure_health_scores(). Deleting a scan (or its profile) deletes

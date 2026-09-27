@@ -43,17 +43,20 @@ any background work (e.g. a running scan thread) on exit.
 """
 
 import customtkinter as ctk
+
 from UI.pages.add_profile_page import AddProfilePage
-from UI.pages.main_menu_page import MainMenuPage
-from UI.pages.settings_page import SettingsPage
-from UI.pages.profile_page import ProfilePage
-from database.storage import Storage
-from UI.pages.scan_page import ScanPage
-from UI.pages.history_page import HistoryPage
-from UI.pages.scan_detail_page import ScanDetailPage
 from UI.pages.compare_scans_page import CompareScansPage
 from UI.pages.device_manager_page import DeviceManagerPage
+from UI.pages.health_page import HealthPage
+from UI.pages.history_page import HistoryPage
+from UI.pages.main_menu_page import MainMenuPage
 from UI.pages.port_scan_page import PortScanPage
+from UI.pages.profile_page import ProfilePage
+from UI.pages.scan_detail_page import ScanDetailPage
+from UI.pages.scan_page import ScanPage
+from UI.pages.settings_page import SettingsPage
+from database.storage import Storage
+
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -74,9 +77,10 @@ class NetWatchApp(ctk.CTk):
         self.current_profile_name = None
 
         PAGES = [
-    MainMenuPage, SettingsPage, AddProfilePage, PortScanPage, ProfilePage,
-    ScanPage, HistoryPage, ScanDetailPage, CompareScansPage, DeviceManagerPage,
-]
+            MainMenuPage, SettingsPage, AddProfilePage, PortScanPage, ProfilePage, HealthPage,
+            ScanPage, HistoryPage, ScanDetailPage, CompareScansPage, DeviceManagerPage,
+        ]
+
         self.container = ctk.CTkFrame(self, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -102,8 +106,6 @@ class NetWatchApp(ctk.CTk):
             if on_close is not None:
                 on_close()
         self.destroy()
-
-
 
 
 if __name__ == "__main__":

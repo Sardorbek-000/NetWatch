@@ -51,10 +51,16 @@ HOW MODULE 3 (FRONTEND) READS THIS
 
 from __future__ import annotations
 
+import ipaddress
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterable, Iterator
+
+# core.validators is pure stdlib (ipaddress + re), so importing it keeps this
+# module free of scapy / mac-vendor-lookup, as the docstring above promises.
+from core.validators import is_valid_ip, is_valid_ip_range, is_valid_mac
 
 # ---------------------------------------------------------------------------
 # Schema is embedded here (not read from schema.sql at runtime) so this
@@ -118,6 +124,18 @@ CREATE TABLE IF NOT EXISTS device_labels (
     PRIMARY KEY (profile_id, mac)
 );
 
+-- ETHAN — devices the user has chosen to actively "watch". Separate from
+-- device_labels (naming) on purpose: a device can be renamed without being
+-- watched, and watched without being renamed. Used to flag when a watched
+-- device disappears from a scan, or reappears after being missing — see
+-- Storage.get_flag_alerts().
+CREATE TABLE IF NOT EXISTS flagged_devices (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    mac         TEXT NOT NULL,
+    flagged_at  TEXT NOT NULL,  -- ISO-8601, when watching started
+    PRIMARY KEY (profile_id, mac)
+);
+
 -- ETHAN — one network-health score per scan (0-100), filled in by
 -- Storage.ensure_health_scores(). Deleting a scan (or its profile) deletes
 -- its score too.
@@ -168,6 +186,22 @@ def _normalize_device(device: Any) -> dict:
 def _iso(value: datetime | None) -> str | None:
     """Consistent ISO-8601 formatting for anything we store/compare as a timestamp."""
     return value.isoformat(timespec="seconds") if value is not None else None
+
+
+# ETHAN — helpers for Storage.get_devices_with_filters()
+def _ip_sort_key(ip: str) -> tuple[int, int]:
+    """Numeric sort key so 192.168.1.2 sorts before 192.168.1.10 (plain string ORDER BY gets this wrong)."""
+    try:
+        return (0, int(ipaddress.IPv4Address(ip)))
+    except ValueError:
+        return (1, 0)  # malformed values sort last instead of crashing the whole query
+
+
+def _ip_in_network(ip: str, network: ipaddress.IPv4Network) -> bool:
+    try:
+        return ipaddress.IPv4Address(ip) in network
+    except ValueError:
+        return False
 
 
 class Storage:
@@ -300,6 +334,124 @@ class Storage:
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ #
+    # ETHAN — Device flagging / monitoring
+    # "Watch" a known device so the app can call out when it goes missing
+    # or comes back — one of the two personal features beyond my core role.
+    # Deliberately its own table (not a column bolted onto device_labels):
+    # naming and watching are independent decisions, and this way flagging
+    # a device never requires it to already have a custom name.
+    # ------------------------------------------------------------------ #
+    def flag_device(self, profile_id: int, mac: str) -> None:
+        """Starts watching `mac` in this profile. Safe to call again on an already-flagged device (no-op, keeps the original flagged_at)."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO flagged_devices (profile_id, mac, flagged_at) VALUES (?, ?, ?)",
+                (profile_id, mac, _iso(datetime.now())),
+            )
+
+    def unflag_device(self, profile_id: int, mac: str) -> None:
+        """Stops watching `mac`. Safe to call even if it wasn't flagged."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM flagged_devices WHERE profile_id = ? AND mac = ?", (profile_id, mac))
+
+    def is_device_flagged(self, profile_id: int, mac: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM flagged_devices WHERE profile_id = ? AND mac = ?", (profile_id, mac)
+            ).fetchone()
+        return row is not None
+
+    def get_flagged_devices(self, profile_id: int) -> list[dict]:
+        """
+        Every watched device in this profile, each with:
+          - its latest known ip/vendor/hostname/custom_name (from get_all_known_devices)
+          - is_online: whether it was present in the profile's most recent scan
+          - consecutive_missing_scans: how many scans in a row (most recent
+            first) it's been absent — 0 if it's currently online. Lets the
+            UI distinguish "missed one scan" from "gone for the last 10",
+            which a bare online/offline flag can't.
+          - uptime_percent: overall presence rate (Storage.get_uptime_stability)
+
+        Empty list if nothing is flagged, or if this profile has no scans yet.
+        """
+        with self._connect() as conn:
+            flagged_macs = {
+                row["mac"]: row["flagged_at"]
+                for row in conn.execute(
+                    "SELECT mac, flagged_at FROM flagged_devices WHERE profile_id = ?", (profile_id,)
+                ).fetchall()
+            }
+        if not flagged_macs:
+            return []
+
+        known_by_mac = {d["mac"]: d for d in self.get_all_known_devices(profile_id)}
+        history = self.get_scan_history(profile_id)  # oldest-first
+        result = []
+        for mac, flagged_at in flagged_macs.items():
+            known = known_by_mac.get(mac, {})
+            consecutive_missing = 0
+            is_online = False
+            # Walk scans newest-first until we find one this device was in,
+            # or run out of scans — that count IS consecutive_missing_scans.
+            for i, scan in enumerate(reversed(history)):
+                present = mac in {d["mac"] for d in self.get_devices_for_scan(scan["id"])}
+                if present:
+                    is_online = (i == 0)
+                    break
+                consecutive_missing += 1
+            result.append({
+                "mac": mac,
+                "custom_name": known.get("custom_name"),
+                "ip": known.get("ip"),
+                "vendor": known.get("vendor"),
+                "hostname": known.get("hostname"),
+                "flagged_at": flagged_at,
+                "is_online": is_online,
+                "consecutive_missing_scans": consecutive_missing,
+                "uptime_percent": self.get_uptime_stability(profile_id, mac),
+            })
+        return result
+
+    def get_flag_alerts(self, profile_id: int) -> list[dict]:
+        """
+        Flagged devices whose presence changed on the MOST RECENT scan
+        compared to the one before it — i.e. "what just happened", not the
+        full history. Call this right after save_scan() (same spot
+        get_new_devices_for_scan() gets called from) to decide whether to
+        show a "device X disappeared" / "device X is back" notification.
+
+        Returns [] if there's no flagged device, fewer than 2 scans yet, or
+        nothing changed for any flagged device on the latest scan.
+        """
+        with self._connect() as conn:
+            flagged_macs = {
+                row["mac"] for row in conn.execute(
+                    "SELECT mac FROM flagged_devices WHERE profile_id = ?", (profile_id,)
+                ).fetchall()
+            }
+        if not flagged_macs:
+            return []
+
+        history = self.get_scan_history(profile_id)  # oldest-first
+        if len(history) < 2:
+            return []
+        latest_scan, previous_scan = history[-1], history[-2]
+
+        diff = self.compare_scans(previous_scan["id"], latest_scan["id"])
+        alerts = []
+        for device in diff["new_devices"]:
+            if device["mac"] in flagged_macs:
+                alerts.append({"mac": device["mac"], "event": "reappeared", "scan_time": latest_scan["scan_time"]})
+        for device in diff["disconnected_devices"]:
+            if device["mac"] in flagged_macs:
+                alerts.append({"mac": device["mac"], "event": "disappeared", "scan_time": latest_scan["scan_time"]})
+        # Attach custom_name for a nicer notification than a bare MAC.
+        names = self.list_device_names(profile_id)
+        for alert in alerts:
+            alert["custom_name"] = names.get(alert["mac"])
+        return alerts
+
+    # ------------------------------------------------------------------ #
     # Saving scans — this is what Module 1's register_callback() calls
     # ------------------------------------------------------------------ #
     def save_scan(
@@ -408,6 +560,117 @@ class Storage:
                 (scan_id, profile_id, scan_time),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # ETHAN — Filtered retrieval
+    # One method for every "filter the device list" need
+    # ------------------------------------------------------------------ #
+    def get_devices_with_filters(
+        self,
+        profile_id: int,
+        *,
+        scan_id: int | None = None,
+        status: str | None = None,
+        ip: str | None = None,
+        ip_range: str | None = None,
+        vendor: str | None = None,
+        mac: str | None = None,
+        hostname: str | None = None,
+        hostname_regex: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        sort_by_ip: bool = False,
+    ) -> list[dict]:
+        """
+        Device sightings for one profile, narrowed by any combination of
+        filters (every filter is optional and they combine with AND).
+        Each row is one device in one scan, so the same MAC appears once
+        per scan it was seen in; scan_id and scan_time are included so the
+        caller can tell them apart. custom_name is filled in when set.
+
+        scan_id         only this scan (must belong to `profile_id`)
+        status          exact match, e.g. "online"
+        ip              exact IPv4 address
+        ip_range        CIDR such as "192.168.1.0/24"; keeps devices whose IP
+                        falls inside it (host bits are ignored, as in
+                        is_valid_ip_range's default)
+        vendor          exact match, case-insensitive
+        mac             case- and separator-insensitive ("aa-bb-..." matches
+                        "AA:BB:...")
+        hostname        exact match, case-insensitive
+        hostname_regex  regex searched in the hostname, case-insensitive
+        start / end     inclusive bounds on scan time, like get_scan_history
+        sort_by_ip      numeric IP order; default is oldest scan first
+
+        Raises ValueError for a malformed ip, ip_range, mac or regex,
+        rather than quietly returning [] and hiding the bug in the caller.
+        """
+        if ip is not None and not is_valid_ip(ip):
+            raise ValueError(f"Invalid IP address: {ip!r}")
+        if mac is not None and not is_valid_mac(mac):
+            raise ValueError(f"Invalid MAC address: {mac!r}")
+
+        network = None
+        if ip_range is not None:
+            if not is_valid_ip_range(ip_range):
+                raise ValueError(f"Invalid IP range: {ip_range!r}")
+            network = ipaddress.IPv4Network(ip_range, strict=False)
+
+        regex = None
+        if hostname_regex is not None:
+            try:
+                regex = re.compile(hostname_regex, re.IGNORECASE)
+            except re.error as exc:
+                raise ValueError(f"Invalid hostname regex {hostname_regex!r}: {exc}") from exc
+
+        query = """
+            SELECT s.id AS scan_id, s.scan_time,
+                   sd.ip, sd.mac, sd.vendor, sd.hostname, sd.status, sd.last_seen,
+                   dl.custom_name
+            FROM scan_devices sd
+            JOIN scans s ON s.id = sd.scan_id
+            LEFT JOIN device_labels dl ON dl.profile_id = s.profile_id AND dl.mac = sd.mac
+            WHERE s.profile_id = ?
+        """
+        params: list[Any] = [profile_id]
+        if scan_id is not None:
+            query += " AND s.id = ?"
+            params.append(scan_id)
+        if status is not None:
+            query += " AND sd.status = ?"
+            params.append(status)
+        if ip is not None:
+            query += " AND sd.ip = ?"
+            params.append(ip)
+        if vendor is not None:
+            query += " AND sd.vendor = ? COLLATE NOCASE"
+            params.append(vendor)
+        if mac is not None:
+            query += " AND REPLACE(UPPER(sd.mac), '-', ':') = ?"
+            params.append(mac.upper().replace("-", ":"))
+        if hostname is not None:
+            query += " AND sd.hostname = ? COLLATE NOCASE"
+            params.append(hostname)
+        if start is not None:
+            query += " AND s.scan_time >= ?"
+            params.append(_iso(start))
+        if end is not None:
+            query += " AND s.scan_time <= ?"
+            params.append(_iso(end))
+        query += " ORDER BY s.scan_time ASC, sd.id ASC"
+
+        with self._connect() as conn:
+            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+
+        # SQLite has no CIDR or regex operators, so these two run in Python
+        # on the (already profile-scoped) rows.
+        if network is not None:
+            rows = [r for r in rows if _ip_in_network(r["ip"], network)]
+        if regex is not None:
+            rows = [r for r in rows if r["hostname"] and regex.search(r["hostname"])]
+        if sort_by_ip:
+            rows.sort(key=lambda r: _ip_sort_key(r["ip"]))  # stable: ties stay in scan-time order
+        return rows
 
     # ------------------------------------------------------------------ #
     # Analytics — starter set; add more methods here as you build features
@@ -585,6 +848,16 @@ class Storage:
         "unknown_vendor": 100 / 3,
     }
 
+    def get_previous_scan_id(self, scan_id: int) -> int | None:
+        """
+        Public wrapper around _get_previous_scan_id() for callers outside
+        this class (e.g. HealthPage's click-to-detail popup) that need the
+        exact same "previous scan" definition used for scoring — same
+        profile, same subnet — rather than approximating it themselves.
+        """
+        with self._connect() as conn:
+            return self._get_previous_scan_id(conn, scan_id)
+
     def _get_previous_scan_id(self, conn: sqlite3.Connection, scan_id: int) -> int | None:
         """
         The scan just before `scan_id` for the same profile AND the same
@@ -681,6 +954,45 @@ class Storage:
                 (scan_id,),
             ).fetchone()
         return dict(row) if row else None
+
+    def get_latest_health_score(self, profile_id):
+        """Returns the health score dict for the most recent scan of a profile, or None."""
+        history = self.get_scan_history(profile_id)
+        if not history:
+            return None
+        latest_scan_id = history[-1]["id"]
+        return self.get_health_score(latest_scan_id)
+
+    def get_health_trend(self, profile_id, start=None, end=None):
+        """
+        Returns a list of dicts with scan_time plus the raw per-scan metric
+        breakdown (new_devices, missing_devices, unknown_vendors,
+        device_count) for a profile within optional date boundaries.
+
+        ETHAN — returns the raw counts (not just the blended score) so the
+        UI can plot each metric as its own trend line instead of folding
+        them into one index. See health_page.py's _refresh_trend_charts().
+        The composite score is still included for anyone who wants it, but
+        HealthPage no longer uses it as of the graphs-instead-of-index redo.
+        device_count comes straight from the scans table (already tracked
+        for the History screen) — added here so it can plot as a fourth
+        trend line alongside new/missing/unknown-vendor.
+        """
+        history = self.get_scan_history(profile_id, start=start, end=end)
+        results = []
+        for scan in history:
+            score_row = self.get_health_score(scan["id"])
+            if score_row is not None:
+                results.append({
+                    "scan_id": scan["id"],
+                    "scan_time": scan["scan_time"],
+                    "score": score_row["score"],
+                    "new_devices": score_row["new_devices"],
+                    "missing_devices": score_row["missing_devices"],
+                    "unknown_vendors": score_row["unknown_vendors"],
+                    "device_count": scan["device_count"],
+                })
+        return results
 
     
 

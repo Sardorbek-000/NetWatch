@@ -2,7 +2,7 @@ import customtkinter as ctk
 
 
 class MainMenuPage(ctk.CTkFrame):
-    """Landing screen: lists every saved profile as a button, plus the Scan Ports / Add Profile / Settings entry points."""
+    """Landing screen: lists every saved profile as a button, plus the Add Profile / Settings entry points."""
 
     def __init__(self, parent, app):
         super().__init__(parent, fg_color="transparent")
@@ -16,8 +16,7 @@ class MainMenuPage(ctk.CTkFrame):
         for profile in self.app.storage.list_profiles():
             ctk.CTkButton(self, text=profile["name"], width=220,
                       command=lambda p=profile: self.enter_profile(p)).pack(pady=10)
-        ctk.CTkButton(self, text="Scan Ports", width=220,
-                      command=lambda: self.app.show_frame("PortScan")).pack(pady=10)
+
         ctk.CTkButton(self, text="Add Profile", width=220,
                       command=lambda: self.app.show_frame("AddProfilePage")).pack(pady=10)
         ctk.CTkButton(self, text="Settings", width=220,

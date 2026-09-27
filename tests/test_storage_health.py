@@ -90,3 +90,41 @@ def test_ensure_is_idempotent_and_only_scores_new_scans(storage, home):
     assert storage.ensure_health_scores(home) == 0
     scan(storage, home, 5, [dev(1)])
     assert storage.ensure_health_scores(home) == 1
+
+def test_latest_health_score(storage, home):
+    assert storage.get_latest_health_score(home) is None
+    scan(storage, home, 0, [dev(1)])
+    last = scan(storage, home, 5, [dev(1), dev(2)])
+    storage.ensure_health_scores(home)
+    latest = storage.get_latest_health_score(home)
+    assert latest["scan_id"] == last
+    assert latest["new_devices"] == 1
+
+
+def test_trend_is_scoped_to_profile_and_date_range(storage, home):
+    other = storage.get_or_create_profile("Uni")
+    scan(storage, other, 0, [dev(1)])
+    for minutes in (0, 60, 120):
+        scan(storage, home, minutes, [dev(1)])
+    storage.ensure_health_scores(home)
+    storage.ensure_health_scores(other)
+    assert len(storage.get_health_trend(home)) == 3
+    ranged = storage.get_health_trend(home, start=T0 + timedelta(minutes=30), end=T0 + timedelta(minutes=90))
+    assert len(ranged) == 1
+    assert [r["scan_time"] for r in storage.get_health_trend(home)] == sorted(
+        r["scan_time"] for r in storage.get_health_trend(home)
+    )
+
+
+def test_deleting_a_profile_deletes_its_scores(storage, home):
+    scan_id = scan(storage, home, 0, [dev(1)])
+    storage.ensure_health_scores(home)
+    storage.delete_profile(home)
+    assert storage.get_health_score(scan_id) is None
+
+
+def test_empty_scan_after_a_full_one_scores_zero_not_negative(storage, home):
+    scan(storage, home, 0, [dev(n) for n in range(1, 6)])
+    empty = scan(storage, home, 5, [])
+    storage.ensure_health_scores(home)
+    assert storage.get_health_score(empty)["score"] == 0
