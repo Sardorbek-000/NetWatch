@@ -124,6 +124,18 @@ CREATE TABLE IF NOT EXISTS device_labels (
     PRIMARY KEY (profile_id, mac)
 );
 
+-- ETHAN — devices the user has chosen to actively "watch". Separate from
+-- device_labels (naming) on purpose: a device can be renamed without being
+-- watched, and watched without being renamed. Used to flag when a watched
+-- device disappears from a scan, or reappears after being missing — see
+-- Storage.get_flag_alerts().
+CREATE TABLE IF NOT EXISTS flagged_devices (
+    profile_id  INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    mac         TEXT NOT NULL,
+    flagged_at  TEXT NOT NULL,  -- ISO-8601, when watching started
+    PRIMARY KEY (profile_id, mac)
+);
+
 -- ETHAN — one network-health score per scan (0-100), filled in by
 -- Storage.ensure_health_scores(). Deleting a scan (or its profile) deletes
 -- its score too.
@@ -320,6 +332,124 @@ class Storage:
         with self._connect() as conn:
             rows = conn.execute(query, (profile_id, profile_id)).fetchall()
         return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # ETHAN — Device flagging / monitoring
+    # "Watch" a known device so the app can call out when it goes missing
+    # or comes back — one of the two personal features beyond my core role.
+    # Deliberately its own table (not a column bolted onto device_labels):
+    # naming and watching are independent decisions, and this way flagging
+    # a device never requires it to already have a custom name.
+    # ------------------------------------------------------------------ #
+    def flag_device(self, profile_id: int, mac: str) -> None:
+        """Starts watching `mac` in this profile. Safe to call again on an already-flagged device (no-op, keeps the original flagged_at)."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO flagged_devices (profile_id, mac, flagged_at) VALUES (?, ?, ?)",
+                (profile_id, mac, _iso(datetime.now())),
+            )
+
+    def unflag_device(self, profile_id: int, mac: str) -> None:
+        """Stops watching `mac`. Safe to call even if it wasn't flagged."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM flagged_devices WHERE profile_id = ? AND mac = ?", (profile_id, mac))
+
+    def is_device_flagged(self, profile_id: int, mac: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM flagged_devices WHERE profile_id = ? AND mac = ?", (profile_id, mac)
+            ).fetchone()
+        return row is not None
+
+    def get_flagged_devices(self, profile_id: int) -> list[dict]:
+        """
+        Every watched device in this profile, each with:
+          - its latest known ip/vendor/hostname/custom_name (from get_all_known_devices)
+          - is_online: whether it was present in the profile's most recent scan
+          - consecutive_missing_scans: how many scans in a row (most recent
+            first) it's been absent — 0 if it's currently online. Lets the
+            UI distinguish "missed one scan" from "gone for the last 10",
+            which a bare online/offline flag can't.
+          - uptime_percent: overall presence rate (Storage.get_uptime_stability)
+
+        Empty list if nothing is flagged, or if this profile has no scans yet.
+        """
+        with self._connect() as conn:
+            flagged_macs = {
+                row["mac"]: row["flagged_at"]
+                for row in conn.execute(
+                    "SELECT mac, flagged_at FROM flagged_devices WHERE profile_id = ?", (profile_id,)
+                ).fetchall()
+            }
+        if not flagged_macs:
+            return []
+
+        known_by_mac = {d["mac"]: d for d in self.get_all_known_devices(profile_id)}
+        history = self.get_scan_history(profile_id)  # oldest-first
+        result = []
+        for mac, flagged_at in flagged_macs.items():
+            known = known_by_mac.get(mac, {})
+            consecutive_missing = 0
+            is_online = False
+            # Walk scans newest-first until we find one this device was in,
+            # or run out of scans — that count IS consecutive_missing_scans.
+            for i, scan in enumerate(reversed(history)):
+                present = mac in {d["mac"] for d in self.get_devices_for_scan(scan["id"])}
+                if present:
+                    is_online = (i == 0)
+                    break
+                consecutive_missing += 1
+            result.append({
+                "mac": mac,
+                "custom_name": known.get("custom_name"),
+                "ip": known.get("ip"),
+                "vendor": known.get("vendor"),
+                "hostname": known.get("hostname"),
+                "flagged_at": flagged_at,
+                "is_online": is_online,
+                "consecutive_missing_scans": consecutive_missing,
+                "uptime_percent": self.get_uptime_stability(profile_id, mac),
+            })
+        return result
+
+    def get_flag_alerts(self, profile_id: int) -> list[dict]:
+        """
+        Flagged devices whose presence changed on the MOST RECENT scan
+        compared to the one before it — i.e. "what just happened", not the
+        full history. Call this right after save_scan() (same spot
+        get_new_devices_for_scan() gets called from) to decide whether to
+        show a "device X disappeared" / "device X is back" notification.
+
+        Returns [] if there's no flagged device, fewer than 2 scans yet, or
+        nothing changed for any flagged device on the latest scan.
+        """
+        with self._connect() as conn:
+            flagged_macs = {
+                row["mac"] for row in conn.execute(
+                    "SELECT mac FROM flagged_devices WHERE profile_id = ?", (profile_id,)
+                ).fetchall()
+            }
+        if not flagged_macs:
+            return []
+
+        history = self.get_scan_history(profile_id)  # oldest-first
+        if len(history) < 2:
+            return []
+        latest_scan, previous_scan = history[-1], history[-2]
+
+        diff = self.compare_scans(previous_scan["id"], latest_scan["id"])
+        alerts = []
+        for device in diff["new_devices"]:
+            if device["mac"] in flagged_macs:
+                alerts.append({"mac": device["mac"], "event": "reappeared", "scan_time": latest_scan["scan_time"]})
+        for device in diff["disconnected_devices"]:
+            if device["mac"] in flagged_macs:
+                alerts.append({"mac": device["mac"], "event": "disappeared", "scan_time": latest_scan["scan_time"]})
+        # Attach custom_name for a nicer notification than a bare MAC.
+        names = self.list_device_names(profile_id)
+        for alert in alerts:
+            alert["custom_name"] = names.get(alert["mac"])
+        return alerts
 
     # ------------------------------------------------------------------ #
     # Saving scans — this is what Module 1's register_callback() calls
