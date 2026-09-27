@@ -11,13 +11,15 @@ class DeviceManagerPage(ctk.CTkFrame):
         ctk.CTkLabel(self, text="Manage Devices", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=(20, 6))
         ctk.CTkLabel(self, text="Every device ever seen in this profile. Rename any of them below.").pack(pady=(0, 10))
 
-        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=420)
-        self.list_frame.pack(pady=10, fill="both", expand=True)
-
+        # Packed BEFORE the expanding list_frame, with side="bottom" — see
+        # the same comment in scan_page.py for why the order matters.
         ctk.CTkButton(
             self, text="Back to Profile", fg_color="gray40", hover_color="gray30",
             command=lambda: app.show_frame("ProfilePage"),
-        ).pack(pady=10)
+        ).pack(side="bottom", pady=10)
+
+        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=420)
+        self.list_frame.pack(pady=10, fill="both", expand=True)
 
     def on_show(self) -> None:
         self._load()
