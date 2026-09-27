@@ -73,12 +73,20 @@ class ScanPage(ctk.CTkFrame):
         self.new_device_banner = ctk.CTkLabel(self, text="", text_color=NEW_DEVICE_COLOR, font=ctk.CTkFont(weight="bold"))
         self.new_device_banner.pack(pady=2)
 
-        self.results_frame = ctk.CTkScrollableFrame(self, width=760, height=260)
-        self.results_frame.pack(pady=10, fill="both", expand=True)
-
+        # Packed BEFORE the expanding results_frame below, with side="bottom",
+        # so it always reserves its own space at the bottom of the page.
+        # Packing order matters here: an expand=True/fill="both" widget
+        # packed first would claim all remaining space immediately,
+        # leaving nothing for anything packed after it — on a smaller
+        # window the button would exist but never actually be visible
+        # (winfo_ismapped() would report False even though the code ran
+        # fine and the widget was created).
         ctk.CTkButton(
             self, text="Back to Profile", fg_color="gray40", hover_color="gray30", command=self._back
-        ).pack(pady=10)
+        ).pack(side="bottom", pady=10)
+
+        self.results_frame = ctk.CTkScrollableFrame(self, width=760, height=260)
+        self.results_frame.pack(pady=10, fill="both", expand=True)
 
         self._polling = False
 
