@@ -13,13 +13,13 @@ class CompareScansPage(ctk.CTkFrame):
         self.title_label = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=22, weight="bold"))
         self.title_label.pack(pady=(20, 10))
 
-        self.content_frame = ctk.CTkScrollableFrame(self, width=780, height=420)
-        self.content_frame.pack(pady=10, fill="both", expand=True)
-
         ctk.CTkButton(
             self, text="Back to History", fg_color="gray40", hover_color="gray30",
             command=lambda: app.show_frame("HistoryPage"),
-        ).pack(pady=10)
+        ).pack(side="bottom", pady=10)
+
+        self.content_frame = ctk.CTkScrollableFrame(self, width=780, height=420)
+        self.content_frame.pack(pady=10, fill="both", expand=True)
 
     def on_show(self, scan_id_a: int, scan_id_b: int) -> None:
         self.title_label.configure(text=f"Compare: Scan #{scan_id_a} -> Scan #{scan_id_b}")
