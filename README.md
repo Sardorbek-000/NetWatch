@@ -102,6 +102,18 @@ tests/                 Test suite
 python -m pytest tests/
 ```
 
+## Screenshots
+
+**Main menu** — every saved Location Profile appears as a button, alongside
+the Add Profile and Settings entry points.
+
+![NetWatch main menu](docs/main-menu.png)
+
+**Profile hub** — once inside a profile, each feature is one click away:
+scanning, history, device management, network health and port scanning.
+
+![NetWatch profile hub](docs/profile-hub.png)
+
 ## Team
 
 | Member | Responsibility |
