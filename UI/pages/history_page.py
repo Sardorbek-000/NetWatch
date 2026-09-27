@@ -25,19 +25,25 @@ class HistoryPage(ctk.CTkFrame):
         ctk.CTkButton(filter_row, text="Filter", width=80, command=self._load_history).grid(row=0, column=4, padx=5)
         ctk.CTkButton(filter_row, text="Clear", width=80, command=self._clear_filter).grid(row=0, column=5, padx=5)
 
-        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=300)
-        self.list_frame.pack(pady=10, fill="both", expand=True)
-
-        self.compare_status = ctk.CTkLabel(self, text="Select up to two scans (checkboxes) to compare.")
-        self.compare_status.pack(pady=5)
-
+        # Packed BEFORE the expanding list_frame, with side="bottom" — this
+        # reserves space for the action buttons + compare status so they
+        # can't get pushed off-screen by the scrollable frame claiming all
+        # available space (see scan_page.py for the full explanation).
+        # side="bottom" packs stack outward-in, so btn_row (meant to sit at
+        # the very bottom) is packed first, then compare_status above it.
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(pady=10)
+        btn_row.pack(side="bottom", pady=10)
         ctk.CTkButton(btn_row, text="Compare Selected", width=160, command=self._compare).pack(side="left", padx=10)
         ctk.CTkButton(
             btn_row, text="Back to Profile", width=160, fg_color="gray40", hover_color="gray30",
             command=lambda: app.show_frame("ProfilePage"),
         ).pack(side="left", padx=10)
+
+        self.compare_status = ctk.CTkLabel(self, text="Select up to two scans (checkboxes) to compare.")
+        self.compare_status.pack(side="bottom", pady=5)
+
+        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=300)
+        self.list_frame.pack(pady=10, fill="both", expand=True)
 
     def on_show(self) -> None:
         self.selected_for_compare = []
