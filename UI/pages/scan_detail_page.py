@@ -14,13 +14,13 @@ class ScanDetailPage(ctk.CTkFrame):
         self.title_label = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=22, weight="bold"))
         self.title_label.pack(pady=(20, 10))
 
-        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=380)
-        self.list_frame.pack(pady=10, fill="both", expand=True)
-
         ctk.CTkButton(
             self, text="Back to History", fg_color="gray40", hover_color="gray30",
             command=lambda: app.show_frame("HistoryPage"),
-        ).pack(pady=10)
+        ).pack(side="bottom", pady=10)
+
+        self.list_frame = ctk.CTkScrollableFrame(self, width=780, height=380)
+        self.list_frame.pack(pady=10, fill="both", expand=True)
 
     def on_show(self, scan_id: int) -> None:
         self.scan_id = scan_id
