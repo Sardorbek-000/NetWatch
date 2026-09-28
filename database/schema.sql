@@ -91,3 +91,12 @@ CREATE TABLE IF NOT EXISTS health_scores (
     missing_devices INTEGER NOT NULL,
     unknown_vendors INTEGER NOT NULL
 );
+
+-- ETHAN — per-profile watch settings. missed_scan_threshold is how many
+-- scans in a row a watched device must be absent before Storage.get_flag_alerts()
+-- reports it as "disappeared" (1 = alert on the first miss). No row means
+-- the default (DEFAULT_MISSED_SCAN_THRESHOLD) applies.
+CREATE TABLE IF NOT EXISTS watch_settings (
+    profile_id            INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    missed_scan_threshold INTEGER NOT NULL CHECK (missed_scan_threshold >= 1)
+);
