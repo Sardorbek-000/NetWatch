@@ -55,6 +55,7 @@ from UI.pages.profile_page import ProfilePage
 from UI.pages.scan_detail_page import ScanDetailPage
 from UI.pages.scan_page import ScanPage
 from UI.pages.settings_page import SettingsPage
+from UI.pages.watch_page import WatchPage
 from database.storage import Storage
 
 
@@ -78,7 +79,7 @@ class NetWatchApp(ctk.CTk):
 
         PAGES = [
             MainMenuPage, SettingsPage, AddProfilePage, PortScanPage, ProfilePage, HealthPage,
-            ScanPage, HistoryPage, ScanDetailPage, CompareScansPage, DeviceManagerPage,
+            ScanPage, HistoryPage, ScanDetailPage, CompareScansPage, DeviceManagerPage, WatchPage,
         ]
 
         self.container = ctk.CTkFrame(self, fg_color="transparent")

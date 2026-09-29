@@ -25,6 +25,8 @@ class ProfilePage(ctk.CTkFrame):
               command=lambda: self.app.show_frame("HistoryPage")).pack(pady=10)
         ctk.CTkButton(self, text="Manage Devices", width=220,
               command=lambda: self.app.show_frame("DeviceManagerPage")).pack(pady=10)
+        ctk.CTkButton(self, text="Watched Devices", width=220,
+              command=lambda: self.app.show_frame("WatchPage")).pack(pady=10)
 
         ctk.CTkButton(self, text="Network Health", width=220,
                       command=lambda: self.app.show_frame("HealthPage")).pack(pady=10)

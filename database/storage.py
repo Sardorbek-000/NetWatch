@@ -75,6 +75,10 @@ from core.validators import is_valid_ip, is_valid_ip_range, is_valid_mac
 # from. Keep the two in sync if you change one (there's a test for this;
 # see the __main__ block at the bottom of this file).
 # ---------------------------------------------------------------------------
+# ETHAN — how many consecutive missed scans before a watched device counts as
+# "disappeared" when the profile hasn't set its own threshold.
+DEFAULT_MISSED_SCAN_THRESHOLD = 2
+
 SCHEMA_SQL = """
 -- One row per Location Profile ("Home", "University", etc.) — the top
 -- level of organization the architecture doc calls for.
@@ -134,6 +138,15 @@ CREATE TABLE IF NOT EXISTS flagged_devices (
     mac         TEXT NOT NULL,
     flagged_at  TEXT NOT NULL,  -- ISO-8601, when watching started
     PRIMARY KEY (profile_id, mac)
+);
+
+-- ETHAN — per-profile watch settings. missed_scan_threshold is how many
+-- scans in a row a watched device must be absent before Storage.get_flag_alerts()
+-- reports it as "disappeared" (1 = alert on the first miss). No row means
+-- the default (DEFAULT_MISSED_SCAN_THRESHOLD) applies.
+CREATE TABLE IF NOT EXISTS watch_settings (
+    profile_id            INTEGER PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+    missed_scan_threshold INTEGER NOT NULL CHECK (missed_scan_threshold >= 1)
 );
 
 -- ETHAN — one network-health score per scan (0-100), filled in by
@@ -412,44 +425,160 @@ class Storage:
             })
         return result
 
+    def get_missed_scan_threshold(self, profile_id: int) -> int:
+        """How many consecutive missed scans before a watched device is reported as disappeared (default DEFAULT_MISSED_SCAN_THRESHOLD)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT missed_scan_threshold FROM watch_settings WHERE profile_id = ?", (profile_id,)
+            ).fetchone()
+        return row["missed_scan_threshold"] if row else DEFAULT_MISSED_SCAN_THRESHOLD
+
+    def set_missed_scan_threshold(self, profile_id: int, threshold: int) -> None:
+        """Saves this profile's missed-scan threshold. Must be a whole number >= 1 (1 = alert on the first missed scan)."""
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
+            raise ValueError(f"missed-scan threshold must be a whole number >= 1, got {threshold!r}")
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO watch_settings (profile_id, missed_scan_threshold) VALUES (?, ?) "
+                "ON CONFLICT(profile_id) DO UPDATE SET missed_scan_threshold = excluded.missed_scan_threshold",
+                (profile_id, threshold),
+            )
+
     def get_flag_alerts(self, profile_id: int) -> list[dict]:
         """
-        Flagged devices whose presence changed on the MOST RECENT scan
-        compared to the one before it — i.e. "what just happened", not the
-        full history. Call this right after save_scan() (same spot
-        get_new_devices_for_scan() gets called from) to decide whether to
-        show a "device X disappeared" / "device X is back" notification.
+        Watched-device events that happened on the MOST RECENT scan — i.e.
+        "what just happened", not the full history. Call this right after
+        save_scan() (same spot get_new_devices_for_scan() gets called from).
 
-        Returns [] if there's no flagged device, fewer than 2 scans yet, or
-        nothing changed for any flagged device on the latest scan.
+        A device only counts as gone once it has missed the profile's
+        threshold (see get_missed_scan_threshold) scans IN A ROW, so a single
+        flaky scan doesn't raise a false alarm:
+          - "disappeared": the latest scan is the Nth consecutive one the
+            device was absent from, and it was seen just before that run.
+            Fires once, on that scan — not again on every later miss.
+          - "reappeared": the device is in the latest scan after having been
+            absent for at least N scans in a row. A shorter gap never raised
+            a "disappeared" alert, so it doesn't raise a "reappeared" one either.
+
+        Each alert has mac, event, scan_time, custom_name and missed_scans
+        (how many scans in a row the device was absent).
+
+        Returns [] if nothing is flagged, there are too few scans to judge,
+        or nothing crossed the threshold on the latest scan.
         """
         with self._connect() as conn:
-            flagged_macs = {
+            flagged_macs = [
                 row["mac"] for row in conn.execute(
                     "SELECT mac FROM flagged_devices WHERE profile_id = ?", (profile_id,)
                 ).fetchall()
-            }
+            ]
         if not flagged_macs:
             return []
 
         history = self.get_scan_history(profile_id)  # oldest-first
+        threshold = self.get_missed_scan_threshold(profile_id)
         if len(history) < 2:
             return []
-        latest_scan, previous_scan = history[-1], history[-2]
+        latest_scan = history[-1]
 
-        diff = self.compare_scans(previous_scan["id"], latest_scan["id"])
+        # Only scans we actually need get loaded, and each at most once.
+        macs_by_scan: dict[int, set[str]] = {}
+
+        def macs_in(scan: dict) -> set[str]:
+            if scan["id"] not in macs_by_scan:
+                macs_by_scan[scan["id"]] = {d["mac"] for d in self.get_devices_for_scan(scan["id"])}
+            return macs_by_scan[scan["id"]]
+
         alerts = []
-        for device in diff["new_devices"]:
-            if device["mac"] in flagged_macs:
-                alerts.append({"mac": device["mac"], "event": "reappeared", "scan_time": latest_scan["scan_time"]})
-        for device in diff["disconnected_devices"]:
-            if device["mac"] in flagged_macs:
-                alerts.append({"mac": device["mac"], "event": "disappeared", "scan_time": latest_scan["scan_time"]})
-        # Attach custom_name for a nicer notification than a bare MAC.
+        for mac in flagged_macs:
+            if mac in macs_in(latest_scan):
+                # Present now: count the run of absences right before this scan.
+                missed = 0
+                seen_before_gap = False
+                for scan in reversed(history[:-1]):
+                    if mac in macs_in(scan):
+                        seen_before_gap = True
+                        break
+                    missed += 1
+                if seen_before_gap and missed >= threshold:
+                    alerts.append({"mac": mac, "event": "reappeared", "missed_scans": missed})
+            else:
+                # Absent now: it's a "disappeared" event only on the scan that
+                # makes the run exactly `threshold` long, and only if the scan
+                # just before that run had it (i.e. it was really online first).
+                if len(history) < threshold + 1:
+                    continue
+                run = history[-threshold:]
+                before_run = history[-(threshold + 1)]
+                if all(mac not in macs_in(scan) for scan in run) and mac in macs_in(before_run):
+                    alerts.append({"mac": mac, "event": "disappeared", "missed_scans": threshold})
+
         names = self.list_device_names(profile_id)
         for alert in alerts:
+            alert["scan_time"] = latest_scan["scan_time"]
             alert["custom_name"] = names.get(alert["mac"])
         return alerts
+
+    def get_watched_timeline(self, profile_id: int, scan_limit: int = 30) -> dict:
+        """
+        Scan-by-scan presence of every watched device over the profile's
+        most recent `scan_limit` scans, for the Watched Devices page.
+
+        Returns:
+            {
+                "scans": [{"id", "scan_time"}, ...],        # oldest first
+                "devices": {
+                    mac: {
+                        "presence":    [bool, ...],   # one per scan above: was it in that scan?
+                        "outages":     int,           # times it went missing after being seen
+                        "longest_gap": int,           # longest run of missed scans after first being seen
+                        "last_seen":   str | None,    # scan_time of the newest scan it was in (None = not in this window)
+                    },
+                },
+            }
+        Scans before a device's first appearance in the window don't count
+        as outages or gaps — it simply wasn't on the network yet. `devices`
+        is empty if nothing is watched.
+        """
+        with self._connect() as conn:
+            flagged = [
+                row["mac"] for row in conn.execute(
+                    "SELECT mac FROM flagged_devices WHERE profile_id = ? ORDER BY flagged_at", (profile_id,)
+                ).fetchall()
+            ]
+            scan_rows = conn.execute(
+                "SELECT id, scan_time FROM scans WHERE profile_id = ? ORDER BY scan_time DESC LIMIT ?",
+                (profile_id, scan_limit),
+            ).fetchall()
+            scans = [dict(row) for row in reversed(scan_rows)]
+
+            seen_in: dict[str, set[int]] = {mac: set() for mac in flagged}
+            if flagged and scans:
+                scan_marks = ",".join("?" * len(scans))
+                mac_marks = ",".join("?" * len(flagged))
+                for row in conn.execute(
+                    f"SELECT scan_id, mac FROM scan_devices WHERE scan_id IN ({scan_marks}) AND mac IN ({mac_marks})",
+                    [s["id"] for s in scans] + flagged,
+                ).fetchall():
+                    seen_in[row["mac"]].add(row["scan_id"])
+
+        devices = {}
+        for mac in flagged:
+            presence = [s["id"] in seen_in[mac] for s in scans]
+            outages = longest_gap = run = 0
+            last_seen = None
+            if True in presence:
+                for i in range(presence.index(True), len(presence)):
+                    if presence[i]:
+                        run = 0
+                        last_seen = scans[i]["scan_time"]
+                    else:
+                        run += 1
+                        longest_gap = max(longest_gap, run)
+                        if run == 1:
+                            outages += 1
+            devices[mac] = {"presence": presence, "outages": outages, "longest_gap": longest_gap, "last_seen": last_seen}
+        return {"scans": scans, "devices": devices}
 
     # ------------------------------------------------------------------ #
     # Saving scans — this is what Module 1's register_callback() calls
