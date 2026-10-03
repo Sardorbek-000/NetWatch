@@ -5,3 +5,7 @@ __pycache__/
 .idea/
 netwatch.db 
 *.db
+
+# PyInstaller build output (see NetWatch.spec)
+build/
+dist/

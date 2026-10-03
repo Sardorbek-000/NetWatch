@@ -5,6 +5,33 @@ network, tracks how that picture changes over time, and flags what's new.
 
 Built with Python and CustomTkinter for CSP1123 Mini IT Project.
 
+## Download (Windows)
+
+**[⬇ Download the latest NetWatch.exe](https://github.com/Sardorbek-000/NetWatch/releases/latest)**
+
+A single self-contained executable — no Python installation required. Three
+things to know before the first run:
+
+1. **Install [Npcap](https://npcap.com/#download)** (free, ~1 MB). NetWatch
+   discovers devices by sending raw ARP packets, which Windows provides no
+   built-in way to do; Npcap supplies that capability. Device scanning will not
+   work without it. It cannot be bundled inside `NetWatch.exe` for licensing
+   reasons. *(Port scanning uses ordinary sockets and works without Npcap.)*
+2. **Approve the administrator prompt.** Raw ARP packets require administrator
+   rights, so the app requests elevation on launch.
+3. **Windows SmartScreen may warn that the publisher is unknown.** This is
+   expected for any unsigned executable — code-signing certificates are a paid
+   commercial product. Choose *More info → Run anyway*.
+
+Your profiles and scan history are stored in `netwatch.db`, created in the
+folder you run `NetWatch.exe` from. Keep the `.exe` somewhere writable — your
+Desktop or a folder in your user directory is fine; `C:\Program Files` is not,
+because standard users cannot write there. Moving the `.exe` without its
+`netwatch.db` starts you with an empty history, and deleting `netwatch.db`
+resets the app.
+
+Linux and macOS users run from source — see [Installation](#installation).
+
 ## Features
 
 - **Location Profiles** — separate scan histories per network ("Home",
@@ -94,6 +121,9 @@ UI/                    CustomTkinter desktop app
   theme.py               Shared colour constants
 
 tests/                 Test suite
+
+NetWatch.spec          PyInstaller build recipe
+.github/workflows/     CI: builds and publishes the Windows release
 ```
 
 ## Running the tests
@@ -113,6 +143,36 @@ the Add Profile and Settings entry points.
 scanning, history, device management, network health and port scanning.
 
 ![NetWatch profile hub](docs/profile-hub.png)
+
+## Building the release
+
+Releases are built automatically. Pushing a version tag runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml) on a Windows
+runner, which installs the pinned dependencies, runs the test suite, builds the
+binary with PyInstaller and attaches it to a new GitHub Release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+To produce a build without publishing one, use **Run workflow** on the Actions
+tab — that uploads `NetWatch.exe` as a downloadable workflow artifact and
+creates no Release.
+
+PyInstaller cannot cross-compile, so a Windows `.exe` can only be produced on
+Windows. On a Windows machine with the dependencies installed, the same build
+runs locally:
+
+```bash
+pip install pyinstaller==6.22.3
+pyinstaller --noconfirm --clean NetWatch.spec   # -> dist/NetWatch.exe
+```
+
+[`NetWatch.spec`](NetWatch.spec) documents why each bundled dependency,
+hidden import and exclusion is there. Packaging is confined to that file and
+the workflow — no application source file is modified or added for the
+release, so the binary runs exactly the code in this repository.
 
 ## Team
 
