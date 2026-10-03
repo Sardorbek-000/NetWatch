@@ -1,0 +1,122 @@
+#
+# Builds the released Windows binary of NetWatch and publishes it to GitHub
+# Releases, which is what the CSP1123 guidelines ask for:
+#
+#   "desktop app and games should be released in binary form
+#    (e.g. GitHub Releases for apps)"
+#
+# Why this runs in CI instead of on a laptop
+# ---------------------------------------------------------------------------
+# PyInstaller does not cross-compile: a Windows .exe can only be produced on
+# Windows. Nobody in the group has to own the build machine this way, and the
+# binary users download is built from a known commit with pinned dependencies
+# rather than from whatever happened to be installed on one person's PC.
+#
+# How to cut a release
+# ---------------------------------------------------------------------------
+#   git tag v1.0.0
+#   git push origin v1.0.0
+#
+# That is all. The job builds NetWatch.exe and attaches it to a new Release
+# named after the tag. To test the build without publishing anything, use the
+# "Run workflow" button on the Actions tab (workflow_dispatch below) — that
+# path uploads the .exe as a downloadable workflow artifact and creates no
+# Release.
+#
+name: Release Windows build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  # Required for softprops/action-gh-release to create the Release and upload
+  # the binary. The default GITHUB_TOKEN is read-only.
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the interpreter the project is developed against, so the
+          # released build cannot diverge from what was tested locally.
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Pinned for the same reason every other dependency is pinned: a
+          # future PyInstaller release should never silently change the
+          # contents of a build we have already demonstrated.
+          pip install pyinstaller==6.22.3
+
+      - name: Run the test suite
+        # A build gate. Shipping a binary built from a commit with failing
+        # tests is worse than shipping nothing.
+        run: python -m pytest -q
+
+      - name: Build NetWatch.exe
+        run: pyinstaller --noconfirm --clean NetWatch.spec
+
+      - name: Verify the build output
+        shell: pwsh
+        run: |
+          $exe = "dist/NetWatch.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Build produced no $exe"
+          }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "Built $exe ($mb MB)"
+          # A few MB would mean the bundle silently lost matplotlib/scapy.
+          if ($mb -lt 20) { throw "$exe is only $mb MB - dependencies are missing" }
+
+      - name: Upload the build artifact
+        # Runs on every build, tagged or not, so a workflow_dispatch run still
+        # gives you something to download and test before tagging a release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: NetWatch-windows
+          path: dist/NetWatch.exe
+          if-no-files-found: error
+
+      - name: Publish the GitHub Release
+        # Only on a v* tag — a manual test build must not create a Release.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/NetWatch.exe
+          draft: false
+          generate_release_notes: true
+          body: |
+            ## NetWatch ${{ github.ref_name }} — Windows
+
+            Download **NetWatch.exe** below and run it. No installation needed.
+
+            ### Before you run it
+
+            - **Install [Npcap](https://npcap.com/#download)** (free). NetWatch
+              discovers devices by sending raw ARP packets, and Windows has no
+              built-in way to do that — Npcap provides it. Device scanning will
+              not work without it. Npcap cannot be bundled inside NetWatch.exe
+              for licensing reasons.
+            - **Approve the administrator prompt** on launch. Raw ARP packets
+              require administrator rights.
+            - **Windows SmartScreen** may warn that the publisher is unknown.
+              This is expected for any unsigned binary (a code-signing
+              certificate is a paid commercial product). Choose
+              *More info → Run anyway*.
+
+            Your scan history is stored in `netwatch.db`, created in the
+            folder you run `NetWatch.exe` from — keep it somewhere writable
+            (not `C:\Program Files`).
